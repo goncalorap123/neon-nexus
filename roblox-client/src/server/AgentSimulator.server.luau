@@ -658,14 +658,23 @@ RunService.Heartbeat:Connect(function(dt)
 
 				-- Check if linger time has elapsed
 				if (t - arrivalTime[agentId]) >= lingerDuration[agentId] then
-					-- Done lingering — pick a new random wander target
+					-- Done lingering — pick a new random wander target (try up to 5 times to avoid walls)
 					arrivalTime[agentId] = nil
 					lingerDuration[agentId] = nil
-					wanderTargets[agentId] = Vector3.new(
-						math.clamp(currentPos.X + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE),
-						GROUND_Y,
-						math.clamp(currentPos.Z + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE)
-					)
+					local newTarget
+					for _ = 1, 5 do
+						local candidate = Vector3.new(
+							math.clamp(currentPos.X + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE),
+							GROUND_Y,
+							math.clamp(currentPos.Z + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE)
+						)
+						local dir = (candidate - currentPos)
+						if dir.Magnitude > 1 and not isBlocked(currentPos, dir.Unit * math.min(dir.Magnitude, OBSTACLE_CHECK_DIST)) then
+							newTarget = candidate
+							break
+						end
+					end
+					wanderTargets[agentId] = newTarget or (currentPos + Vector3.new(math.random(-5, 5), 0, math.random(-5, 5)))
 				end
 			else
 				-- Moving toward target
