@@ -2,12 +2,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpBridge = require(script.Parent:WaitForChild("HttpBridge"))
 
--- Create Remotes folder in ReplicatedStorage
+-- Create Remotes folder
 local Remotes = Instance.new("Folder")
 Remotes.Name = "Remotes"
 Remotes.Parent = ReplicatedStorage
 
--- Create RemoteFunctions for client-server communication
 local function createRemoteFunction(name: string): RemoteFunction
 	local rf = Instance.new("RemoteFunction")
 	rf.Name = name
@@ -20,121 +19,84 @@ local SetStrategyRF = createRemoteFunction("SetStrategy")
 local GetGameStateRF = createRemoteFunction("GetGameState")
 local TriggerEventRF = createRemoteFunction("TriggerEvent")
 local GetLeaderboardRF = createRemoteFunction("GetLeaderboard")
-local GetTradeOffersRF = createRemoteFunction("GetTradeOffers")
-local CreateTradeOfferRF = createRemoteFunction("CreateTradeOffer")
-local ExecuteTradeRF = createRemoteFunction("ExecuteTrade")
 
--- Use UserId as the stable player identifier (matches backend playerId)
-local function getPlayerId(player: Player): string
-	return tostring(player.UserId)
+local function getPlayerId(plr: Player): string
+	return tostring(plr.UserId)
 end
 
--- Handle new players joining — auto-create agent
-Players.PlayerAdded:Connect(function(player)
-	print("[GameManager] Player joined:", player.Name)
+-- CreateAgent: creates wallet + registers on-chain, returns result directly
+CreateAgentRF.OnServerInvoke = function(plr)
+	local playerId = getPlayerId(plr)
+	print("[GameManager] Deploying agent for", plr.Name, "(", playerId, ")")
 
-	task.spawn(function()
-		local playerId = getPlayerId(player)
-		local success, existing = HttpBridge.getAgentState(playerId)
-		if not success or not existing then
-			local createSuccess, data = HttpBridge.createAgent(playerId)
-			if createSuccess and data then
-				print("[GameManager] Agent created for", player.Name, "wallet:", data.address or "unknown")
-			else
-				warn("[GameManager] Failed to create agent for", player.Name)
-			end
-		else
-			print("[GameManager] Agent already exists for", player.Name)
-		end
-	end)
-end)
-
-Players.PlayerRemoving:Connect(function(player)
-	print("[GameManager] Player left:", player.Name)
-end)
-
--- CreateAgent
-CreateAgentRF.OnServerInvoke = function(player)
-	local success, data = HttpBridge.createAgent(getPlayerId(player))
+	local success, data = HttpBridge.createAgent(playerId)
 	if success and data then
-		return { success = true, data = data }
+		print("[GameManager] Agent deployed:", data.address or "unknown")
+		return data -- { walletId, address, txHash }
 	end
-	return { success = false, error = "Failed to create agent" }
+
+	warn("[GameManager] Failed to deploy agent for", plr.Name)
+	return nil
 end
 
--- SetStrategy
-SetStrategyRF.OnServerInvoke = function(player, strategy: number)
-	local success, data = HttpBridge.setStrategy(getPlayerId(player), strategy)
+-- SetStrategy: returns result directly
+SetStrategyRF.OnServerInvoke = function(plr, strategy: number)
+	local success, data = HttpBridge.setStrategy(getPlayerId(plr), strategy)
 	if success then
-		return { success = true, data = data }
+		return data
 	end
-	return { success = false, error = "Failed to set strategy" }
+	return nil
 end
 
--- GetGameState
-GetGameStateRF.OnServerInvoke = function(player)
-	local success, data = HttpBridge.getGameState(getPlayerId(player))
-	if success then
-		return { success = true, data = data }
+-- GetGameState: returns unwrapped data { player, resources }
+GetGameStateRF.OnServerInvoke = function(plr)
+	local success, data = HttpBridge.getGameState(getPlayerId(plr))
+	if success and data then
+		return data -- { player: { playerId, address, onChain: {...} }, resources: {...} }
 	end
-	return { success = false, error = "Failed to get game state" }
+	return nil
 end
 
--- TriggerEvent (commit + wait + reveal)
-TriggerEventRF.OnServerInvoke = function(player, eventType: number)
-	local playerId = getPlayerId(player)
+-- TriggerEvent: commit + wait + reveal
+TriggerEventRF.OnServerInvoke = function(plr, eventType: number)
+	local playerId = getPlayerId(plr)
 
-	-- Step 1: Commit
+	-- Commit phase
 	local commitOk, commitData = HttpBridge.triggerRandomEvent(playerId, eventType)
 	if not commitOk then
-		return { success = false, error = "Failed to commit event" }
+		warn("[GameManager] Commit failed for", plr.Name)
+		return nil
 	end
 
-	-- Step 2: Wait for next block (~3-4 seconds on Flow)
+	-- Wait for next block on Flow (~3-4 seconds)
 	task.wait(4)
 
-	-- Step 3: Reveal
+	-- Reveal phase
 	local revealOk, revealData = HttpBridge.revealRandomEvent(playerId)
 	if revealOk then
-		return { success = true, data = revealData }
+		return revealData
 	end
-	return { success = false, error = "Failed to reveal event" }
+
+	warn("[GameManager] Reveal failed for", plr.Name)
+	return nil
 end
 
--- GetLeaderboard
-GetLeaderboardRF.OnServerInvoke = function(_player)
+-- GetLeaderboard: returns array of agents
+GetLeaderboardRF.OnServerInvoke = function(_plr)
 	local success, data = HttpBridge.getLeaderboard()
-	if success then
-		return { success = true, data = data }
+	if success and data then
+		return data
 	end
-	return { success = false, error = "Failed to get leaderboard" }
+	return {}
 end
 
--- GetTradeOffers
-GetTradeOffersRF.OnServerInvoke = function(_player)
-	local success, data = HttpBridge.getTradeOffers()
-	if success then
-		return { success = true, data = data }
-	end
-	return { success = false, error = "Failed to get trade offers" }
-end
+-- No auto-create on join — player must click Deploy Agent
+Players.PlayerAdded:Connect(function(plr)
+	print("[GameManager] Player joined:", plr.Name)
+end)
 
--- CreateTradeOffer
-CreateTradeOfferRF.OnServerInvoke = function(player, resourceType: number, quantity: string, pricePerUnit: string)
-	local success, data = HttpBridge.createTradeOffer(getPlayerId(player), resourceType, quantity, pricePerUnit)
-	if success then
-		return { success = true, data = data }
-	end
-	return { success = false, error = "Failed to create trade offer" }
-end
-
--- ExecuteTrade
-ExecuteTradeRF.OnServerInvoke = function(player, offerId: number, quantity: string)
-	local success, data = HttpBridge.executeTrade(getPlayerId(player), offerId, quantity)
-	if success then
-		return { success = true, data = data }
-	end
-	return { success = false, error = "Failed to execute trade" }
-end
+Players.PlayerRemoving:Connect(function(plr)
+	print("[GameManager] Player left:", plr.Name)
+end)
 
 print("[GameManager] Initialized successfully")
