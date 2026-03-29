@@ -138,4 +138,9 @@ function HttpBridge.getAgentBalance(playerId: string)
 	return HttpBridge.request("GET", "/agent/" .. playerId .. "/balance")
 end
 
+-- Get current agent actions (AI decisions)
+function HttpBridge.getAgentActions()
+	return HttpBridge.request("GET", "/game/agent-actions")
+end
+
 return HttpBridge

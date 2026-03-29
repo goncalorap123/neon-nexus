@@ -1,11 +1,15 @@
 import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
 import { GameService } from './game.service';
+import { AgentActionService } from '../database/agent-action.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 
 @Controller('api/game')
 @UseGuards(ApiKeyGuard)
 export class GameController {
-  constructor(private readonly gameService: GameService) {}
+  constructor(
+    private readonly gameService: GameService,
+    private readonly agentActionService: AgentActionService,
+  ) {}
 
   @Get('state/:playerId')
   async getGameState(@Param('playerId') playerId: string) {
@@ -32,5 +36,11 @@ export class GameController {
   async getLeaderboard() {
     const leaderboard = await this.gameService.getLeaderboard();
     return { success: true, data: leaderboard };
+  }
+
+  @Get('agent-actions')
+  async getAgentActions() {
+    const actions = await this.agentActionService.getAllActions();
+    return { success: true, data: actions };
   }
 }

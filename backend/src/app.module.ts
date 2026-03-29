@@ -8,6 +8,7 @@ import { GameModule } from './game/game.module';
 import { RandomModule } from './random/random.module';
 import { SettlementModule } from './settlement/settlement.module';
 import { TradingModule } from './trading/trading.module';
+import { AiReasoningModule } from './ai/ai-reasoning.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { TradingModule } from './trading/trading.module';
     RandomModule,
     SettlementModule,
     TradingModule,
+    AiReasoningModule,
   ],
 })
 export class AppModule {}

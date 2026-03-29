@@ -128,4 +128,11 @@ export class AgentService {
     const agents = await this.agentRepo.find({ where: { active: true } });
     return agents.map((a) => a.playerId);
   }
+
+  async updateStrategy(playerId: string, strategyType: number): Promise<void> {
+    const agent = await this.agentRepo.findOneBy({ playerId });
+    if (!agent) return;
+    agent.strategyType = strategyType;
+    await this.agentRepo.save(agent);
+  }
 }

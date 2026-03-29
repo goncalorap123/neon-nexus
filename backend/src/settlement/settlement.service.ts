@@ -3,6 +3,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { AgentService } from '../agent/agent.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { TransactionLogService } from '../database/transaction-log.service';
+import { AiReasoningService, AgentDecisionContext } from '../ai/ai-reasoning.service';
+import { AgentActionService } from '../database/agent-action.service';
 
 // Yield rates per hour based on strategy (in token base units, e.g. 6 decimals)
 const YIELD_RATES = [
@@ -19,6 +21,7 @@ const RESOURCE_WEIGHTS: Record<number, number[]> = {
 };
 
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
+const STRATEGY_NAMES = ['Conservative', 'Balanced', 'Aggressive'];
 
 @Injectable()
 export class SettlementService {
@@ -28,6 +31,8 @@ export class SettlementService {
     private readonly agentService: AgentService,
     private readonly blockchainService: BlockchainService,
     private readonly txLogService: TransactionLogService,
+    private readonly aiReasoningService: AiReasoningService,
+    private readonly agentActionService: AgentActionService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -84,23 +89,179 @@ export class SettlementService {
       return;
     }
 
+    // Build leaderboard for context
+    const agentScores: Array<{ playerId: string; address: string; score: number }> = [];
+    for (const agent of agents) {
+      try {
+        const onChain = await this.blockchainService.getAgent(agent.address);
+        if (!onChain || !onChain.active) continue;
+
+        const deposit = Number(onChain.deposit);
+        const yieldEarned = Number(onChain.yieldEarned);
+        const resources: number[] = [];
+        for (let i = 0; i < 4; i++) {
+          const bal = await this.blockchainService.getAgentResources(agent.address, i);
+          resources.push(Number(bal));
+        }
+        const score = deposit + yieldEarned + (resources[0] * 10 + resources[1] * 15 + resources[2] * 20 + resources[3] * 10);
+        agentScores.push({ playerId: agent.playerId, address: agent.address, score });
+      } catch {
+        // skip agent for leaderboard
+      }
+    }
+    agentScores.sort((a, b) => b.score - a.score);
+
+    // Fetch active trade offers
+    const activeOffers: AgentDecisionContext['activeTradeOffers'] = [];
+    try {
+      const nextOfferId = await this.blockchainService.getNextOfferId();
+      for (let id = 0; id < Number(nextOfferId); id++) {
+        try {
+          const offer = await this.blockchainService.getOffer(id);
+          const quantity = BigInt(offer.quantity ?? offer[2] ?? 0);
+          if (quantity > 0n) {
+            const resourceType = Number(offer.resourceType ?? offer[1] ?? 0);
+            activeOffers.push({
+              resourceType,
+              resourceName: RESOURCE_NAMES[resourceType] || 'unknown',
+              quantity: quantity.toString(),
+              pricePerUnit: (offer.pricePerUnit ?? offer[3] ?? 0).toString(),
+              sellerAddress: offer.seller ?? offer[0] ?? '',
+            });
+          }
+        } catch {
+          // offer may not exist
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to fetch trade offers: ${error.message}`);
+    }
+
     for (const agent of agents) {
       try {
         const onChain = await this.blockchainService.getAgent(agent.address);
         if (!onChain || !onChain.active) continue;
 
         const strategyType = Number(onChain.strategyType);
-        const yieldEarned = BigInt(onChain.yieldEarned);
-        if (yieldEarned === 0n) continue;
+        const deposit = Number(onChain.deposit);
+        const yieldEarned = Number(onChain.yieldEarned);
 
+        // Get all 4 resource balances
+        const resources: { wood: number; steel: number; energy: number; food: number } = {
+          wood: 0, steel: 0, energy: 0, food: 0,
+        };
+        const resourceValues: number[] = [];
+        for (let i = 0; i < 4; i++) {
+          const bal = await this.blockchainService.getAgentResources(agent.address, i);
+          const val = Number(bal);
+          resourceValues.push(val);
+        }
+        resources.wood = resourceValues[0];
+        resources.steel = resourceValues[1];
+        resources.energy = resourceValues[2];
+        resources.food = resourceValues[3];
+
+        // Get FLOW balance
+        let flowBalance = '0';
+        try {
+          flowBalance = await this.blockchainService.getBalance(agent.address);
+        } catch {
+          flowBalance = '0';
+        }
+
+        // Compute score
+        const score = deposit + yieldEarned + (resources.wood * 10 + resources.steel * 15 + resources.energy * 20 + resources.food * 10);
+
+        // Leaderboard position
+        const position = agentScores.findIndex((a) => a.playerId === agent.playerId) + 1;
+
+        // Recent history from transaction logs
+        let recentHistory: string[] = [];
+        try {
+          const logs = await this.txLogService.getRecentLogs(agent.playerId, 5);
+          recentHistory = logs.map((l) => `${l.action}: ${l.details || '{}'}`);
+        } catch {
+          recentHistory = [];
+        }
+
+        // Build context
+        const context: AgentDecisionContext = {
+          agentId: agent.playerId,
+          strategy: STRATEGY_NAMES[strategyType] || 'Balanced',
+          strategyType,
+          resources,
+          deposit,
+          yieldEarned,
+          flowBalance,
+          score,
+          leaderboardPosition: position || agents.length,
+          totalAgents: agents.length,
+          activeTradeOffers: activeOffers,
+          recentHistory,
+        };
+
+        // Get AI decision
+        const decision = await this.aiReasoningService.decideAgentAction(context);
+        this.logger.log(`Agent ${agent.playerId} AI decision: ${decision.action} - ${decision.reasoning}`);
+
+        // Execute the decision
+        await this.executeDecision(agent, onChain, decision, strategyType, resourceValues);
+
+        // Track the action
+        await this.agentActionService.updateAction(
+          agent.playerId,
+          decision.action,
+          decision.reasoning,
+          undefined,
+          decision.details.resourceToGather ?? decision.details.tradeResourceType,
+        );
+
+      } catch (error) {
+        this.logger.error(`Failed to run decisions for ${agent.playerId}: ${error.message}`);
+      }
+    }
+
+    this.logger.log('Agent decision cycle complete');
+  }
+
+  private async executeDecision(
+    agent: any,
+    onChain: any,
+    decision: { action: string; details: any; reasoning: string },
+    strategyType: number,
+    resourceValues: number[],
+  ) {
+    switch (decision.action) {
+      case 'gather': {
+        const yieldEarned = BigInt(onChain.yieldEarned);
+        if (yieldEarned === 0n) {
+          this.logger.log(`Agent ${agent.playerId}: no yield to convert to resources, skipping gather`);
+          break;
+        }
+
+        // Determine which resource to gather
+        let resourceType = decision.details.resourceToGather;
+        if (resourceType === undefined || resourceType < 0 || resourceType > 3) {
+          // Fall back to strategy-weighted random
+          const weights = RESOURCE_WEIGHTS[strategyType] ?? RESOURCE_WEIGHTS[1];
+          const totalWeight = weights.reduce((a, b) => a + b, 0);
+          const roll = Math.random() * totalWeight;
+          let cumulative = 0;
+          resourceType = 0;
+          for (let i = 0; i < 4; i++) {
+            cumulative += weights[i];
+            if (roll < cumulative) {
+              resourceType = i;
+              break;
+            }
+          }
+        }
+
+        // Mint resources based on yield earned
         const weights = RESOURCE_WEIGHTS[strategyType] ?? RESOURCE_WEIGHTS[1];
         const totalWeight = weights.reduce((a, b) => a + b, 0);
-
-        for (let resourceType = 0; resourceType < 4; resourceType++) {
-          const resourceAmount = (yieldEarned * BigInt(weights[resourceType])) / BigInt(totalWeight * 100);
-          if (resourceAmount === 0n) continue;
-
-          // mintResources is onlyOwner
+        const resourceAmount = (yieldEarned * BigInt(weights[resourceType])) / BigInt(totalWeight * 100);
+        if (resourceAmount > 0n) {
           const mintData = this.blockchainService.encodeMintResources(
             agent.address,
             resourceType,
@@ -112,47 +273,121 @@ export class SettlementService {
           );
         }
 
-        await this.txLogService.log(agent.playerId, agent.address, 'resources_minted', '', {
-          strategyType,
-          reasoning: `Strategy ${['Conservative', 'Balanced', 'Aggressive'][strategyType]} resource allocation based on yield earned`,
+        await this.txLogService.log(agent.playerId, agent.address, 'resources_gathered', '', {
+          resourceType,
+          resourceName: RESOURCE_NAMES[resourceType],
+          amount: resourceAmount.toString(),
+          reasoning: decision.reasoning,
         });
 
-        this.logger.log(`Minted resources for agent ${agent.playerId} based on strategy ${strategyType}`);
+        this.logger.log(`Gathered ${resourceAmount} ${RESOURCE_NAMES[resourceType]} for agent ${agent.playerId}`);
+        break;
+      }
 
-        // Check for surplus resources (>200) and auto-list for trade
-        for (let resType = 0; resType < 4; resType++) {
-          try {
-            const balance = await this.blockchainService.getAgentResources(agent.address, resType);
-            if (balance > 200n) {
-              const sellAmount = balance - 100n; // Keep 100, sell the rest
-              const tradeData = this.blockchainService.encodeCreateOffer(agent.address, resType, sellAmount, 1n);
-              await this.blockchainService.ownerSendTransaction(
-                this.blockchainService.getAgentTradingAddress(),
-                tradeData,
-              );
+      case 'trade': {
+        const details = decision.details;
+        if (details.tradeAction === 'create_offer') {
+          const resType = details.tradeResourceType ?? 0;
+          const quantity = BigInt(details.tradeQuantity ?? 100);
+          const price = BigInt(details.tradePricePerUnit ?? 1);
 
-              await this.txLogService.log(agent.playerId, agent.address, 'auto_trade', '', {
-                resource: RESOURCE_NAMES[resType],
-                amount: sellAmount.toString(),
-                reasoning: `Surplus detected (${balance.toString()} > 200), listing ${sellAmount.toString()} for sale`,
-              });
+          const tradeData = this.blockchainService.encodeCreateOffer(agent.address, resType, quantity, price);
+          await this.blockchainService.ownerSendTransaction(
+            this.blockchainService.getAgentTradingAddress(),
+            tradeData,
+          );
 
-              this.logger.log(`Auto-listed ${sellAmount} ${RESOURCE_NAMES[resType]} for agent ${agent.playerId}`);
-            }
-          } catch (error) {
-            this.logger.error(`Failed surplus check for ${agent.playerId} resource ${resType}: ${error.message}`);
-          }
+          await this.txLogService.log(agent.playerId, agent.address, 'trade_create_offer', '', {
+            resourceType: resType,
+            resourceName: RESOURCE_NAMES[resType],
+            quantity: quantity.toString(),
+            pricePerUnit: price.toString(),
+            reasoning: decision.reasoning,
+          });
+
+          this.logger.log(`Agent ${agent.playerId} created trade offer: ${quantity} ${RESOURCE_NAMES[resType]} at ${price}/unit`);
+        } else if (details.tradeAction === 'accept_offer') {
+          const offerId = BigInt(details.tradeOfferId ?? 0);
+          const quantity = BigInt(details.tradeQuantity ?? 1);
+
+          const tradeData = this.blockchainService.encodeExecuteTrade(agent.address, offerId, quantity);
+          await this.blockchainService.ownerSendTransaction(
+            this.blockchainService.getAgentTradingAddress(),
+            tradeData,
+          );
+
+          await this.txLogService.log(agent.playerId, agent.address, 'trade_accept_offer', '', {
+            offerId: offerId.toString(),
+            quantity: quantity.toString(),
+            reasoning: decision.reasoning,
+          });
+
+          this.logger.log(`Agent ${agent.playerId} accepted trade offer #${offerId} for ${quantity} units`);
         }
+        break;
+      }
 
-        if (strategyType === 2) {
-          await this.autoTrade(agent.address);
-        }
-      } catch (error) {
-        this.logger.error(`Failed to run decisions for ${agent.playerId}: ${error.message}`);
+      case 'change_strategy': {
+        const newStrategy = decision.details.newStrategy ?? 1;
+        if (newStrategy < 0 || newStrategy > 2) break;
+
+        const stratData = this.blockchainService.encodeSetStrategy(agent.address, newStrategy);
+        await this.blockchainService.ownerSendTransaction(
+          this.blockchainService.getNeonNexusAddress(),
+          stratData,
+        );
+
+        // Update agent in DB
+        await this.agentService.updateStrategy(agent.playerId, newStrategy);
+
+        await this.txLogService.log(agent.playerId, agent.address, 'strategy_changed', '', {
+          oldStrategy: strategyType,
+          newStrategy,
+          reasoning: decision.reasoning,
+        });
+
+        this.logger.log(`Agent ${agent.playerId} changed strategy to ${STRATEGY_NAMES[newStrategy]}`);
+        break;
+      }
+
+      case 'trigger_event': {
+        const eventType = decision.details.eventType ?? Math.floor(Math.random() * 4);
+
+        // Commit event
+        const commitData = this.blockchainService.encodeCommitEvent(agent.address, eventType);
+        await this.blockchainService.ownerSendTransaction(
+          this.blockchainService.getRandomEventsAddress(),
+          commitData,
+        );
+
+        // Wait before revealing
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // Reveal event
+        const revealData = this.blockchainService.encodeRevealEvent(agent.address);
+        await this.blockchainService.ownerSendTransaction(
+          this.blockchainService.getRandomEventsAddress(),
+          revealData,
+        );
+
+        await this.txLogService.log(agent.playerId, agent.address, 'event_triggered', '', {
+          eventType,
+          reasoning: decision.reasoning,
+        });
+
+        this.logger.log(`Agent ${agent.playerId} triggered event type ${eventType}`);
+        break;
+      }
+
+      case 'idle':
+      default: {
+        await this.txLogService.log(agent.playerId, agent.address, 'idle', '', {
+          reasoning: decision.reasoning,
+        });
+        this.logger.log(`Agent ${agent.playerId} idling: ${decision.reasoning}`);
+        break;
       }
     }
-
-    this.logger.log('Agent decision cycle complete');
   }
 
   private async autoTrade(agentAddress: string) {

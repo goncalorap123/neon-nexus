@@ -39,4 +39,12 @@ export type LeaderboardEntry = {
 	score: number,
 }
 
+export type AgentAction = {
+	playerId: string,
+	currentAction: string,
+	reasoning: string?,
+	targetAgentId: string?,
+	targetResourceType: number?,
+}
+
 return Types

@@ -3,12 +3,15 @@ import { SettlementService } from '../src/settlement/settlement.service';
 import { AgentService } from '../src/agent/agent.service';
 import { BlockchainService } from '../src/blockchain/blockchain.service';
 import { TransactionLogService } from '../src/database/transaction-log.service';
+import { AiReasoningService } from '../src/ai/ai-reasoning.service';
+import { AgentActionService } from '../src/database/agent-action.service';
 
 describe('SettlementService', () => {
   let service: SettlementService;
 
   const mockAgentService = {
     getAllAgents: jest.fn(),
+    updateStrategy: jest.fn(),
   };
 
   const mockBlockchainService = {
@@ -16,14 +19,31 @@ describe('SettlementService', () => {
     encodeDistributeYield: jest.fn().mockReturnValue('0xYIELD'),
     encodeMintResources: jest.fn().mockReturnValue('0xMINT'),
     encodeCreateOffer: jest.fn().mockReturnValue('0xOFFER'),
+    encodeExecuteTrade: jest.fn().mockReturnValue('0xTRADE'),
+    encodeSetStrategy: jest.fn().mockReturnValue('0xSTRAT'),
+    encodeCommitEvent: jest.fn().mockReturnValue('0xCOMMIT'),
+    encodeRevealEvent: jest.fn().mockReturnValue('0xREVEAL'),
     ownerSendTransaction: jest.fn().mockResolvedValue({ hash: '0xTX' }),
     getNeonNexusAddress: jest.fn().mockReturnValue('0xNEON'),
     getAgentTradingAddress: jest.fn().mockReturnValue('0xTRADE'),
-    getAgentResources: jest.fn(),
+    getRandomEventsAddress: jest.fn().mockReturnValue('0xRANDOM'),
+    getAgentResources: jest.fn().mockResolvedValue(50n),
+    getBalance: jest.fn().mockResolvedValue('10.0'),
+    getNextOfferId: jest.fn().mockResolvedValue(0n),
+    getOffer: jest.fn(),
   };
 
   const mockTxLogService = {
     log: jest.fn().mockResolvedValue({ id: 1 }),
+    getRecentLogs: jest.fn().mockResolvedValue([]),
+  };
+
+  const mockAiReasoningService = {
+    decideAgentAction: jest.fn(),
+  };
+
+  const mockAgentActionService = {
+    updateAction: jest.fn().mockResolvedValue({ playerId: 'p1', currentAction: 'idle' }),
   };
 
   beforeEach(async () => {
@@ -33,11 +53,18 @@ describe('SettlementService', () => {
         { provide: AgentService, useValue: mockAgentService },
         { provide: BlockchainService, useValue: mockBlockchainService },
         { provide: TransactionLogService, useValue: mockTxLogService },
+        { provide: AiReasoningService, useValue: mockAiReasoningService },
+        { provide: AgentActionService, useValue: mockAgentActionService },
       ],
     }).compile();
 
     service = module.get<SettlementService>(SettlementService);
     jest.clearAllMocks();
+    // Reset default mocks
+    mockBlockchainService.getAgentResources.mockResolvedValue(50n);
+    mockBlockchainService.getBalance.mockResolvedValue('10.0');
+    mockBlockchainService.getNextOfferId.mockResolvedValue(0n);
+    mockTxLogService.getRecentLogs.mockResolvedValue([]);
   });
 
   describe('distributeYield', () => {
@@ -134,138 +161,207 @@ describe('SettlementService', () => {
   });
 
   describe('runAgentDecisions', () => {
+    const defaultOnChain = {
+      active: true,
+      strategyType: 1,
+      deposit: '1000',
+      yieldEarned: '500',
+    };
+
+    beforeEach(() => {
+      mockBlockchainService.getAgent.mockResolvedValue(defaultOnChain);
+    });
+
     it('should do nothing when no active agents', async () => {
       mockAgentService.getAllAgents.mockResolvedValue([]);
       await service.runAgentDecisions();
-      expect(mockBlockchainService.encodeMintResources).not.toHaveBeenCalled();
+      expect(mockAiReasoningService.decideAgentAction).not.toHaveBeenCalled();
     });
 
-    it('should skip agents with zero yieldEarned', async () => {
+    it('should call AI reasoning service for each agent', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'idle',
+        details: {},
+        reasoning: 'Nothing to do right now',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockAiReasoningService.decideAgentAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'p1',
+          strategy: 'Balanced',
+          strategyType: 1,
+        }),
+      );
+    });
+
+    it('should execute gather action and mint resources', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'gather',
+        details: { resourceToGather: 2 },
+        reasoning: 'Gathering energy for score boost',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockBlockchainService.encodeMintResources).toHaveBeenCalled();
+      expect(mockBlockchainService.ownerSendTransaction).toHaveBeenCalled();
+      expect(mockTxLogService.log).toHaveBeenCalledWith(
+        'p1', '0xA', 'resources_gathered', '',
+        expect.objectContaining({ resourceName: 'energy', reasoning: 'Gathering energy for score boost' }),
+      );
+    });
+
+    it('should execute trade create_offer action', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'trade',
+        details: {
+          tradeAction: 'create_offer',
+          tradeResourceType: 1,
+          tradeQuantity: 50,
+          tradePricePerUnit: 2,
+        },
+        reasoning: 'Selling surplus steel',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockBlockchainService.encodeCreateOffer).toHaveBeenCalledWith('0xA', 1, 50n, 2n);
+      expect(mockTxLogService.log).toHaveBeenCalledWith(
+        'p1', '0xA', 'trade_create_offer', '',
+        expect.objectContaining({ resourceName: 'steel', reasoning: 'Selling surplus steel' }),
+      );
+    });
+
+    it('should execute trade accept_offer action', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'trade',
+        details: {
+          tradeAction: 'accept_offer',
+          tradeOfferId: 3,
+          tradeQuantity: 10,
+        },
+        reasoning: 'Buying cheap wood',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockBlockchainService.encodeExecuteTrade).toHaveBeenCalledWith('0xA', 3n, 10n);
+      expect(mockTxLogService.log).toHaveBeenCalledWith(
+        'p1', '0xA', 'trade_accept_offer', '',
+        expect.objectContaining({ reasoning: 'Buying cheap wood' }),
+      );
+    });
+
+    it('should execute change_strategy action', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'change_strategy',
+        details: { newStrategy: 2 },
+        reasoning: 'Switching to aggressive for higher yield',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockBlockchainService.encodeSetStrategy).toHaveBeenCalledWith('0xA', 2);
+      expect(mockAgentService.updateStrategy).toHaveBeenCalledWith('p1', 2);
+    });
+
+    it('should execute idle action and log it', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'idle',
+        details: {},
+        reasoning: 'Market conditions unfavorable, holding position',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockTxLogService.log).toHaveBeenCalledWith(
+        'p1', '0xA', 'idle', '',
+        expect.objectContaining({ reasoning: 'Market conditions unfavorable, holding position' }),
+      );
+    });
+
+    it('should update agent action tracking after decision', async () => {
+      mockAgentService.getAllAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'gather',
+        details: { resourceToGather: 0 },
+        reasoning: 'Need more wood',
+      });
+
+      await service.runAgentDecisions();
+
+      expect(mockAgentActionService.updateAction).toHaveBeenCalledWith(
+        'p1', 'gather', 'Need more wood', undefined, 0,
+      );
+    });
+
+    it('should skip inactive on-chain agents in decisions', async () => {
       mockAgentService.getAllAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
       ]);
       mockBlockchainService.getAgent.mockResolvedValue({
-        active: true,
+        active: false,
         strategyType: 1,
+        deposit: '0',
         yieldEarned: '0',
       });
 
       await service.runAgentDecisions();
 
-      expect(mockBlockchainService.encodeMintResources).not.toHaveBeenCalled();
+      expect(mockAiReasoningService.decideAgentAction).not.toHaveBeenCalled();
     });
 
-    it('should mint resources per strategy weights for balanced (strategy 1)', async () => {
+    it('should handle errors gracefully for individual agents', async () => {
       mockAgentService.getAllAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
+        { playerId: 'p2', address: '0xB' },
       ]);
-      mockBlockchainService.getAgent.mockResolvedValue({
-        active: true,
-        strategyType: 1,
-        yieldEarned: '10000',
+      // The method calls getAgent in two loops: leaderboard build + decision
+      // Leaderboard loop: both succeed
+      // Decision loop: first agent throws, second succeeds
+      let callCount = 0;
+      mockBlockchainService.getAgent.mockImplementation(() => {
+        callCount++;
+        // Calls 1,2 = leaderboard loop (both succeed)
+        // Call 3 = decision loop for p1 (throws)
+        // Call 4 = decision loop for p2 (succeeds)
+        if (callCount === 3) {
+          return Promise.reject(new Error('RPC error'));
+        }
+        return Promise.resolve(defaultOnChain);
       });
-      // No surplus resources
-      mockBlockchainService.getAgentResources.mockResolvedValue(50n);
+      mockAiReasoningService.decideAgentAction.mockResolvedValue({
+        action: 'idle',
+        details: {},
+        reasoning: 'Resting',
+      });
 
       await service.runAgentDecisions();
 
-      // totalWeight = 25+35+25+15 = 100
-      // wood:   (10000 * 25) / (100 * 100) = 25
-      // steel:  (10000 * 35) / (100 * 100) = 35
-      // energy: (10000 * 25) / (100 * 100) = 25
-      // food:   (10000 * 15) / (100 * 100) = 15
-      expect(mockBlockchainService.encodeMintResources).toHaveBeenCalledWith('0xA', 0, 25n);
-      expect(mockBlockchainService.encodeMintResources).toHaveBeenCalledWith('0xA', 1, 35n);
-      expect(mockBlockchainService.encodeMintResources).toHaveBeenCalledWith('0xA', 2, 25n);
-      expect(mockBlockchainService.encodeMintResources).toHaveBeenCalledWith('0xA', 3, 15n);
-
-      expect(mockTxLogService.log).toHaveBeenCalledWith(
-        'p1', '0xA', 'resources_minted', '',
-        expect.objectContaining({ strategyType: 1 }),
-      );
-    });
-
-    it('should auto-list surplus resources (>200)', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
-      ]);
-      mockBlockchainService.getAgent.mockResolvedValue({
-        active: true,
-        strategyType: 0,
-        yieldEarned: '10000',
-      });
-      // Resource 0 (wood) has surplus of 300, others are low
-      mockBlockchainService.getAgentResources
-        .mockResolvedValueOnce(300n)  // wood - surplus
-        .mockResolvedValueOnce(50n)   // steel
-        .mockResolvedValueOnce(10n)   // energy
-        .mockResolvedValueOnce(100n); // food
-
-      await service.runAgentDecisions();
-
-      // Should create offer: sell 300-100=200 wood at price 1
-      expect(mockBlockchainService.encodeCreateOffer).toHaveBeenCalledWith('0xA', 0, 200n, 1n);
-      expect(mockTxLogService.log).toHaveBeenCalledWith(
-        'p1', '0xA', 'auto_trade', '',
-        expect.objectContaining({ resource: 'wood', amount: '200' }),
-      );
-    });
-
-    it('should not auto-list when resources are not surplus', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
-      ]);
-      mockBlockchainService.getAgent.mockResolvedValue({
-        active: true,
-        strategyType: 0,
-        yieldEarned: '10000',
-      });
-      mockBlockchainService.getAgentResources.mockResolvedValue(100n);
-
-      await service.runAgentDecisions();
-
-      expect(mockBlockchainService.encodeCreateOffer).not.toHaveBeenCalled();
-    });
-
-    it('should call autoTrade for aggressive strategy (strategy 2)', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
-      ]);
-      mockBlockchainService.getAgent.mockResolvedValue({
-        active: true,
-        strategyType: 2,
-        yieldEarned: '10000',
-      });
-      // Surplus check returns low values
-      mockBlockchainService.getAgentResources
-        .mockResolvedValueOnce(50n)  // wood (surplus check)
-        .mockResolvedValueOnce(50n)  // steel (surplus check)
-        .mockResolvedValueOnce(50n)  // energy (surplus check)
-        .mockResolvedValueOnce(50n)  // food (surplus check)
-        .mockResolvedValueOnce(200n); // energy for autoTrade (>100, so sell half=100)
-
-      await service.runAgentDecisions();
-
-      // autoTrade should encode createOffer for energy (resource type 2)
-      expect(mockBlockchainService.encodeCreateOffer).toHaveBeenCalledWith('0xA', 2, 100n, 1n);
-    });
-
-    it('should not autoTrade when energy <= 100', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
-      ]);
-      mockBlockchainService.getAgent.mockResolvedValue({
-        active: true,
-        strategyType: 2,
-        yieldEarned: '10000',
-      });
-      // All resources low, including energy for autoTrade
-      mockBlockchainService.getAgentResources.mockResolvedValue(50n);
-
-      await service.runAgentDecisions();
-
-      // encodeCreateOffer should NOT be called (no surplus, energy <= 100)
-      expect(mockBlockchainService.encodeCreateOffer).not.toHaveBeenCalled();
+      // First agent errored, second processed fine
+      expect(mockAiReasoningService.decideAgentAction).toHaveBeenCalledTimes(1);
     });
   });
 });

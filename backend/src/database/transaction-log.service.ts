@@ -41,4 +41,12 @@ export class TransactionLogService {
       take: limit,
     });
   }
+
+  async getRecentLogs(playerId: string, limit = 5): Promise<TransactionLogEntity[]> {
+    return this.logRepo.find({
+      where: { playerId },
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
+  }
 }

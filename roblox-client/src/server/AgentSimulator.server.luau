@@ -1,10 +1,11 @@
 local HttpBridge = require(script.Parent:WaitForChild("HttpBridge"))
+local RunService = game:GetService("RunService")
 
 local UPDATE_INTERVAL = 15 -- seconds between updates
 local SPAWN_RANGE = 80 -- NPCs spawn within -80 to 80 on X/Z
 local GROUND_Y = 3 -- Y position for NPCs
-local WANDER_RANGE = 12 -- how far NPCs wander each update
-local MOVE_SPEED = 0.05 -- lerp factor for smooth movement
+local MOVE_SPEED = 0.08 -- lerp factor for smooth movement
+local BUBBLE_INTERVAL = 20 -- seconds between action bubbles
 
 print("[AgentSimulator] Starting agent simulation loop...")
 
@@ -29,29 +30,183 @@ local strategyNames = {
 	[2] = "Aggressive",
 }
 
--- Target positions for NPC wandering
+-- Darken a color for limbs
+local function darkenColor(c: Color3): Color3
+	return Color3.new(math.max(0, c.R - 0.15), math.max(0, c.G - 0.15), math.max(0, c.B - 0.15))
+end
+
+-- Target positions for NPC movement
 local wanderTargets: { [string]: Vector3 } = {}
+
+-- Track movement state per agent
+local isMoving: { [string]: boolean } = {}
 
 -- Track last action bubble time per agent
 local lastBubbleTime: { [string]: number } = {}
-local BUBBLE_INTERVAL = 30 -- seconds between action bubbles
 
--- Action phrases by strategy
+-- Store current actions per agent from backend
+local agentActions: { [string]: any } = {}
+
+-- Action phrases by strategy (fallback when no AI reasoning available)
 local actionPhrases = {
 	[0] = { "Saving resources...", "Steady growth...", "Checking yield..." },
 	[1] = { "Trading steel...", "Analyzing market...", "Optimizing..." },
 	[2] = { "BUYING ENERGY!", "Gacha roll!", "High risk trade!" },
 }
 
+-- Resource positions cache (populated by scanning workspace)
+local resourcePositions: { [string]: { Vector3 } } = {
+	wood = {},
+	steel = {},
+	energy = {},
+	food = {},
+}
+
+-- Scan workspace for resource spawn positions
+local function scanResourcePositions()
+	resourcePositions = { wood = {}, steel = {}, energy = {}, food = {} }
+
+	-- Try to find CityWorld > ResourceSpawns folder first
+	local cityWorld = workspace:FindFirstChild("CityWorld")
+	if cityWorld then
+		local resFolder = cityWorld:FindFirstChild("ResourceSpawns")
+		if resFolder then
+			for _, child in resFolder:GetChildren() do
+				if child:IsA("Part") then
+					local lowerName = string.lower(child.Name)
+					if string.find(lowerName, "wood") then
+						table.insert(resourcePositions.wood, child.Position)
+					elseif string.find(lowerName, "steel") then
+						table.insert(resourcePositions.steel, child.Position)
+					elseif string.find(lowerName, "energy") then
+						table.insert(resourcePositions.energy, child.Position)
+					elseif string.find(lowerName, "food") then
+						table.insert(resourcePositions.food, child.Position)
+					end
+				end
+			end
+		end
+	end
+
+	-- Fallback: scan all descendants for parts with resource-related BillboardGui labels
+	if #resourcePositions.wood == 0 and #resourcePositions.steel == 0 then
+		for _, desc in workspace:GetDescendants() do
+			if desc:IsA("Part") then
+				local billboard = desc:FindFirstChildOfClass("BillboardGui")
+				if billboard then
+					local label = billboard:FindFirstChildOfClass("TextLabel")
+					if label then
+						local text = string.lower(label.Text or "")
+						if text == "wood" then
+							table.insert(resourcePositions.wood, desc.Position)
+						elseif text == "steel" then
+							table.insert(resourcePositions.steel, desc.Position)
+						elseif text == "energy" then
+							table.insert(resourcePositions.energy, desc.Position)
+						elseif text == "food" then
+							table.insert(resourcePositions.food, desc.Position)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- Hardcoded fallback if nothing found
+	if #resourcePositions.wood == 0 then
+		resourcePositions.wood = { Vector3.new(50, GROUND_Y, 50), Vector3.new(-60, GROUND_Y, 30) }
+	end
+	if #resourcePositions.steel == 0 then
+		resourcePositions.steel = { Vector3.new(-50, GROUND_Y, -50), Vector3.new(40, GROUND_Y, -60) }
+	end
+	if #resourcePositions.energy == 0 then
+		resourcePositions.energy = { Vector3.new(60, GROUND_Y, -30), Vector3.new(-40, GROUND_Y, 60) }
+	end
+	if #resourcePositions.food == 0 then
+		resourcePositions.food = { Vector3.new(-30, GROUND_Y, -60), Vector3.new(70, GROUND_Y, 20) }
+	end
+end
+
+-- Find nearest position from a list
+local function findNearest(origin: Vector3, positions: { Vector3 }): Vector3
+	local best = positions[1]
+	local bestDist = (origin - best).Magnitude
+	for i = 2, #positions do
+		local d = (origin - positions[i]).Magnitude
+		if d < bestDist then
+			best = positions[i]
+			bestDist = d
+		end
+	end
+	return best
+end
+
+-- Fetch agent actions from backend
+local function fetchAgentActions()
+	local success, data = HttpBridge.getAgentActions()
+	if success and data and type(data) == "table" then
+		for _, actionData in data do
+			local pid = actionData.playerId
+			if pid then
+				agentActions[pid] = actionData
+			end
+		end
+	end
+end
+
+-- Resource type index to name mapping
+local RESOURCE_NAMES_BY_INDEX = { [0] = "wood", [1] = "steel", [2] = "energy", [3] = "food" }
+
+-- Determine movement target based on agent action
+local function getActionTarget(agentId: string, currentPos: Vector3): Vector3?
+	local actionData = agentActions[agentId]
+	if not actionData then return nil end
+
+	local action = actionData.currentAction or ""
+
+	-- Backend sends: "gather", "trade", "change_strategy", "trigger_event", "idle"
+	if action == "gather" then
+		-- Use targetResourceType to determine which resource to walk toward
+		local resType = actionData.targetResourceType
+		local resName = RESOURCE_NAMES_BY_INDEX[resType] or "wood"
+		local positions = resourcePositions[resName]
+		if positions and #positions > 0 then
+			return findNearest(currentPos, positions)
+		end
+		return nil
+	elseif action == "trade" then
+		-- Walk toward target agent if specified, otherwise nearest other NPC
+		local targetId = actionData.targetAgentId
+		if targetId and agentModels[targetId] then
+			local targetModel = agentModels[targetId]
+			local torso = targetModel:FindFirstChild("Torso") :: Part?
+			if torso then
+				return Vector3.new(torso.Position.X, GROUND_Y, torso.Position.Z)
+			end
+		end
+		-- If no specific target, walk toward map center (marketplace area)
+		return Vector3.new(0, GROUND_Y, 0)
+	elseif action == "change_strategy" or action == "trigger_event" then
+		return Vector3.new(0, GROUND_Y, 0)
+	end
+
+	-- "idle" or unknown: return nil (will use random wander)
+	return nil
+end
+
 -- Show a temporary text bubble above an NPC model
 local function showActionBubble(model: Model, text: string, duration: number)
 	local head = model:FindFirstChild("Head") :: Part?
 	if not head then return end
 
+	-- Remove existing bubble
+	local existing = head:FindFirstChild("ActionBubble")
+	if existing then existing:Destroy() end
+
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "ActionBubble"
 	billboard.Adornee = head
-	billboard.Size = UDim2.new(0, 220, 0, 40)
+	billboard.Size = UDim2.new(0, 240, 0, 44)
 	billboard.StudsOffset = Vector3.new(0, 4.5, 0)
 	billboard.AlwaysOnTop = true
 	billboard.Parent = head
@@ -70,14 +225,17 @@ local function showActionBubble(model: Model, text: string, duration: number)
 
 	local label = Instance.new("TextLabel")
 	label.Name = "BubbleText"
-	label.Size = UDim2.new(1, 0, 1, 0)
+	label.Size = UDim2.new(1, -8, 1, -4)
+	label.Position = UDim2.new(0, 4, 0, 2)
 	label.BackgroundTransparency = 1
 	label.TextColor3 = Color3.fromRGB(0, 255, 220)
 	label.TextStrokeTransparency = 0.4
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	label.TextSize = 14
+	label.TextSize = 13
 	label.Font = Enum.Font.GothamBold
 	label.Text = text
+	label.TextWrapped = true
+	label.TextTruncate = Enum.TextTruncate.AtEnd
 	label.Parent = billboard
 
 	task.delay(duration, function()
@@ -87,54 +245,167 @@ local function showActionBubble(model: Model, text: string, duration: number)
 	end)
 end
 
--- Build a simple humanoid NPC model from Parts
+-- Celebration particle effect
+local function playCelebration(model: Model)
+	local head = model:FindFirstChild("Head") :: Part?
+	if not head then return end
+
+	local effectPart = Instance.new("Part")
+	effectPart.Name = "CelebrationFX"
+	effectPart.Size = Vector3.new(0.5, 0.5, 0.5)
+	effectPart.Transparency = 1
+	effectPart.Anchored = true
+	effectPart.CanCollide = false
+	effectPart.Position = head.Position + Vector3.new(0, 1, 0)
+	effectPart.Parent = model
+
+	local particles = Instance.new("ParticleEmitter")
+	particles.Color = ColorSequence.new(Color3.fromRGB(255, 215, 0), Color3.fromRGB(255, 255, 100))
+	particles.Rate = 50
+	particles.Lifetime = NumberRange.new(0.3, 0.8)
+	particles.Speed = NumberRange.new(3, 8)
+	particles.SpreadAngle = Vector2.new(180, 180)
+	particles.LightEmission = 1
+	particles.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.3),
+		NumberSequenceKeypoint.new(0.5, 0.5),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	particles.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.7, 0),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	particles.Parent = effectPart
+	particles.Enabled = true
+
+	task.delay(0.5, function()
+		particles.Enabled = false
+	end)
+
+	task.delay(2, function()
+		if effectPart and effectPart.Parent then
+			effectPart:Destroy()
+		end
+	end)
+end
+
+-- Build a humanoid-rig NPC model from Parts
 local function createNPCModel(agentData: any): Model
 	local name = agentData.name or agentData.id or "Agent"
 	local strategy = agentData.strategy or 1
 	local score = agentData.score or 0
 	local color = strategyColors[strategy] or strategyColors[1]
+	local limbColor = darkenColor(color)
 
 	local model = Instance.new("Model")
 	model.Name = name
 
-	-- Body (torso block)
-	local body = Instance.new("Part")
-	body.Name = "Body"
-	body.Shape = Enum.PartType.Block
-	body.Size = Vector3.new(2, 3, 1.5)
-	body.Color = color
-	body.Material = Enum.Material.Neon
-	body.Anchored = true
-	body.CanCollide = false
-	body.Parent = model
+	-- Torso
+	local torso = Instance.new("Part")
+	torso.Name = "Torso"
+	torso.Shape = Enum.PartType.Block
+	torso.Size = Vector3.new(2, 2.4, 1.2)
+	torso.Color = color
+	torso.Material = Enum.Material.Neon
+	torso.Anchored = true
+	torso.CanCollide = false
+	torso.Parent = model
 
-	-- Head (sphere on top)
+	-- Head
 	local head = Instance.new("Part")
 	head.Name = "Head"
 	head.Shape = Enum.PartType.Ball
-	head.Size = Vector3.new(1.6, 1.6, 1.6)
+	head.Size = Vector3.new(1.4, 1.4, 1.4)
 	head.Color = color
 	head.Material = Enum.Material.Neon
 	head.Anchored = true
 	head.CanCollide = false
 	head.Parent = model
 
-	-- Position relative to body
+	-- Left Arm
+	local leftArm = Instance.new("Part")
+	leftArm.Name = "LeftArm"
+	leftArm.Shape = Enum.PartType.Block
+	leftArm.Size = Vector3.new(0.6, 2.2, 0.6)
+	leftArm.Color = limbColor
+	leftArm.Material = Enum.Material.Neon
+	leftArm.Anchored = true
+	leftArm.CanCollide = false
+	leftArm.Parent = model
+
+	-- Right Arm
+	local rightArm = Instance.new("Part")
+	rightArm.Name = "RightArm"
+	rightArm.Shape = Enum.PartType.Block
+	rightArm.Size = Vector3.new(0.6, 2.2, 0.6)
+	rightArm.Color = limbColor
+	rightArm.Material = Enum.Material.Neon
+	rightArm.Anchored = true
+	rightArm.CanCollide = false
+	rightArm.Parent = model
+
+	-- Left Leg
+	local leftLeg = Instance.new("Part")
+	leftLeg.Name = "LeftLeg"
+	leftLeg.Shape = Enum.PartType.Block
+	leftLeg.Size = Vector3.new(0.7, 2.2, 0.7)
+	leftLeg.Color = limbColor
+	leftLeg.Material = Enum.Material.Neon
+	leftLeg.Anchored = true
+	leftLeg.CanCollide = false
+	leftLeg.Parent = model
+
+	-- Right Leg
+	local rightLeg = Instance.new("Part")
+	rightLeg.Name = "RightLeg"
+	rightLeg.Shape = Enum.PartType.Block
+	rightLeg.Size = Vector3.new(0.7, 2.2, 0.7)
+	rightLeg.Color = limbColor
+	rightLeg.Material = Enum.Material.Neon
+	rightLeg.Anchored = true
+	rightLeg.CanCollide = false
+	rightLeg.Parent = model
+
+	-- Aura ring at feet (cylinder via SpecialMesh)
+	local auraRing = Instance.new("Part")
+	auraRing.Name = "AuraRing"
+	auraRing.Size = Vector3.new(4, 0.1, 4)
+	auraRing.Color = color
+	auraRing.Material = Enum.Material.Neon
+	auraRing.Transparency = 0.6
+	auraRing.Anchored = true
+	auraRing.CanCollide = false
+	auraRing.Parent = model
+
+	local auraMesh = Instance.new("SpecialMesh")
+	auraMesh.MeshType = Enum.MeshType.Cylinder
+	auraMesh.Parent = auraRing
+
+	-- Spawn position
 	local spawnX = math.random(-SPAWN_RANGE, SPAWN_RANGE)
 	local spawnZ = math.random(-SPAWN_RANGE, SPAWN_RANGE)
-	body.Position = Vector3.new(spawnX, GROUND_Y, spawnZ)
-	head.Position = Vector3.new(spawnX, GROUND_Y + 2.3, spawnZ)
+	local basePos = Vector3.new(spawnX, GROUND_Y, spawnZ)
 
-	model.PrimaryPart = body
+	-- Position all parts relative to torso center
+	torso.Position = basePos
+	head.Position = basePos + Vector3.new(0, 1.9, 0)
+	leftArm.Position = basePos + Vector3.new(-1.3, -0.1, 0)
+	rightArm.Position = basePos + Vector3.new(1.3, -0.1, 0)
+	leftLeg.Position = basePos + Vector3.new(-0.5, -2.3, 0)
+	rightLeg.Position = basePos + Vector3.new(0.5, -2.3, 0)
+	auraRing.Position = basePos + Vector3.new(0, -2.3, 0)
 
-	-- Point light for glow effect
+	model.PrimaryPart = torso
+
+	-- Point light for glow
 	local glow = Instance.new("PointLight")
 	glow.Color = color
-	glow.Brightness = 0.8
-	glow.Range = 6
-	glow.Parent = body
+	glow.Brightness = 1.2
+	glow.Range = 8
+	glow.Parent = torso
 
-	-- BillboardGui for overhead nametag
+	-- BillboardGui nametag on Head
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "Nametag"
 	billboard.Adornee = head
@@ -173,29 +444,76 @@ local function createNPCModel(agentData: any): Model
 	return model
 end
 
+-- Position all limbs relative to a torso position
+local function positionLimbs(model: Model, basePos: Vector3, animOffsets: { la: number, ra: number, ll: number, rl: number, headBob: number })
+	local head = model:FindFirstChild("Head") :: Part?
+	local leftArm = model:FindFirstChild("LeftArm") :: Part?
+	local rightArm = model:FindFirstChild("RightArm") :: Part?
+	local leftLeg = model:FindFirstChild("LeftLeg") :: Part?
+	local rightLeg = model:FindFirstChild("RightLeg") :: Part?
+	local auraRing = model:FindFirstChild("AuraRing") :: Part?
+
+	if head then
+		head.Position = basePos + Vector3.new(0, 1.9 + animOffsets.headBob, 0)
+	end
+	if leftArm then
+		leftArm.Position = basePos + Vector3.new(-1.3, -0.1, animOffsets.la)
+	end
+	if rightArm then
+		rightArm.Position = basePos + Vector3.new(1.3, -0.1, animOffsets.ra)
+	end
+	if leftLeg then
+		leftLeg.Position = basePos + Vector3.new(-0.5, -2.3, animOffsets.ll)
+	end
+	if rightLeg then
+		rightLeg.Position = basePos + Vector3.new(0.5, -2.3, animOffsets.rl)
+	end
+	if auraRing then
+		auraRing.Position = basePos + Vector3.new(0, -2.3, 0)
+	end
+end
+
 -- Update an existing NPC model based on agent state
 local function updateAgentModel(model: Model, agentData: any)
 	local strategy = agentData.strategy or 1
 	local score = agentData.score or 0
 	local name = agentData.name or agentData.id or "Agent"
 	local color = strategyColors[strategy] or strategyColors[1]
+	local limbColor = darkenColor(color)
+	local agentId = agentData.id or "unknown"
 
-	-- Update body and head colors
-	local body = model:FindFirstChild("Body") :: Part?
-	local head = model:FindFirstChild("Head") :: Part?
-
-	if body then
-		body.Color = color
-		local glow = body:FindFirstChildOfClass("PointLight")
+	-- Update torso color
+	local torso = model:FindFirstChild("Torso") :: Part?
+	if torso then
+		torso.Color = color
+		local glow = torso:FindFirstChildOfClass("PointLight")
 		if glow then
 			glow.Color = color
 		end
 	end
 
+	-- Update head color
+	local head = model:FindFirstChild("Head") :: Part?
 	if head then
 		head.Color = color
+	end
 
-		-- Update nametag
+	-- Update limb colors
+	for _, limbName in { "LeftArm", "RightArm", "LeftLeg", "RightLeg" } do
+		local limb = model:FindFirstChild(limbName) :: Part?
+		if limb then
+			limb.Color = limbColor
+		end
+	end
+
+	-- Update aura ring
+	local auraRing = model:FindFirstChild("AuraRing") :: Part?
+	if auraRing then
+		auraRing.Color = color
+	end
+
+	-- Update nametag
+	if head then
 		local billboard = head:FindFirstChild("Nametag") :: BillboardGui?
 		if billboard then
 			local nameLabel = billboard:FindFirstChild("NameLabel") :: TextLabel?
@@ -210,41 +528,78 @@ local function updateAgentModel(model: Model, agentData: any)
 		end
 	end
 
-	-- Smooth movement toward a wander target
-	local agentId = agentData.id or "unknown"
-	if body then
-		local currentPos = body.Position
+	-- Set wander target based on action (actual movement happens in Heartbeat)
+	if torso then
+		local currentPos = torso.Position
 
-		-- Pick a new target if we don't have one or are close enough
-		if not wanderTargets[agentId] then
-			wanderTargets[agentId] = Vector3.new(
-				currentPos.X + math.random(-WANDER_RANGE, WANDER_RANGE),
-				GROUND_Y,
-				currentPos.Z + math.random(-WANDER_RANGE, WANDER_RANGE)
-			)
+		-- Determine target based on action
+		local actionTarget = getActionTarget(agentId, currentPos)
+		if actionTarget then
+			wanderTargets[agentId] = Vector3.new(actionTarget.X, GROUND_Y, actionTarget.Z)
 		end
 
-		local target = wanderTargets[agentId]
-		local dist = (Vector3.new(target.X, 0, target.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
-
-		if dist < 2 then
-			-- Arrived, pick new target
+		-- Pick a new random wander target if no target exists
+		if not wanderTargets[agentId] then
 			wanderTargets[agentId] = Vector3.new(
-				math.clamp(currentPos.X + math.random(-WANDER_RANGE, WANDER_RANGE), -SPAWN_RANGE, SPAWN_RANGE),
+				math.clamp(currentPos.X + math.random(-8, 8), -SPAWN_RANGE, SPAWN_RANGE),
 				GROUND_Y,
-				math.clamp(currentPos.Z + math.random(-WANDER_RANGE, WANDER_RANGE), -SPAWN_RANGE, SPAWN_RANGE)
+				math.clamp(currentPos.Z + math.random(-8, 8), -SPAWN_RANGE, SPAWN_RANGE)
 			)
-		else
-			-- Lerp toward target
-			local newPos = currentPos:Lerp(target, MOVE_SPEED)
-			newPos = Vector3.new(newPos.X, GROUND_Y, newPos.Z)
-			body.Position = newPos
-			if head then
-				head.Position = Vector3.new(newPos.X, GROUND_Y + 2.3, newPos.Z)
-			end
 		end
 	end
 end
+
+-- Movement + walking animation system via Heartbeat (runs every frame)
+RunService.Heartbeat:Connect(function()
+	local t = tick()
+	for agentId, model in agentModels do
+		local torso = model:FindFirstChild("Torso") :: Part?
+		if not torso then continue end
+
+		-- Move torso toward wander target
+		local target = wanderTargets[agentId]
+		if target then
+			local currentPos = torso.Position
+			local dist = (Vector3.new(target.X, 0, target.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
+
+			if dist < 2 then
+				-- Arrived at target — stop moving, pick new random wander
+				isMoving[agentId] = false
+				wanderTargets[agentId] = Vector3.new(
+					math.clamp(currentPos.X + math.random(-15, 15), -SPAWN_RANGE, SPAWN_RANGE),
+					GROUND_Y,
+					math.clamp(currentPos.Z + math.random(-15, 15), -SPAWN_RANGE, SPAWN_RANGE)
+				)
+			else
+				isMoving[agentId] = true
+				local newPos = currentPos:Lerp(target, MOVE_SPEED)
+				torso.Position = Vector3.new(newPos.X, GROUND_Y, newPos.Z)
+			end
+		end
+
+		local basePos = torso.Position
+
+		if isMoving[agentId] then
+			-- Walking animation: alternating arm-leg swing
+			positionLimbs(model, basePos, {
+				la = math.sin(t * 8) * 0.6,
+				ra = -math.sin(t * 8) * 0.6,
+				ll = -math.sin(t * 8) * 0.5,
+				rl = math.sin(t * 8) * 0.5,
+				headBob = 0,
+			})
+		else
+			-- Idle animation: subtle head bob
+			positionLimbs(model, basePos, {
+				la = 0,
+				ra = 0,
+				ll = 0,
+				rl = 0,
+				headBob = math.sin(t * 2) * 0.08,
+			})
+		end
+	end
+end)
 
 -- Track which agent IDs are present this tick (for removal)
 local function removeStaleAgents(activeIds: { [string]: boolean })
@@ -254,14 +609,29 @@ local function removeStaleAgents(activeIds: { [string]: boolean })
 			model:Destroy()
 			agentModels[agentId] = nil
 			wanderTargets[agentId] = nil
+			isMoving[agentId] = nil
+			lastBubbleTime[agentId] = nil
+			agentActions[agentId] = nil
 		end
 	end
 end
 
+-- Track previous actions for celebration detection
+local previousActions: { [string]: string } = {}
+
+-- Scan resource positions once after a short delay to let WorldBuilder finish
+task.delay(3, function()
+	scanResourcePositions()
+	print("[AgentSimulator] Scanned resource positions")
+end)
+
 -- Main simulation loop
 while true do
-	-- Use leaderboard endpoint to get all agents (no playerId needed)
+	-- Fetch leaderboard (all agents)
 	local success, agents = HttpBridge.getLeaderboard()
+
+	-- Also fetch agent actions
+	fetchAgentActions()
 
 	if success and agents and type(agents) == "table" then
 		local activeIds: { [string]: boolean } = {}
@@ -284,6 +654,7 @@ while true do
 					agentModels[agentId]:Destroy()
 					agentModels[agentId] = nil
 					wanderTargets[agentId] = nil
+					isMoving[agentId] = nil
 				end
 				continue
 			end
@@ -294,6 +665,16 @@ while true do
 				-- Spawn new NPC
 				local model = createNPCModel(agent)
 				agentModels[agentId] = model
+				-- Set initial wander target so NPC starts moving immediately
+				local spawnTorso = model:FindFirstChild("Torso") :: Part?
+				if spawnTorso then
+					local sp = spawnTorso.Position
+					wanderTargets[agentId] = Vector3.new(
+						math.clamp(sp.X + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE),
+						GROUND_Y,
+						math.clamp(sp.Z + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE)
+					)
+				end
 				print(string.format(
 					"[AgentSimulator] Spawned NPC: %s | Strategy: %s | Score: %d",
 					agent.name or agentId,
@@ -305,15 +686,33 @@ while true do
 				updateAgentModel(agentModels[agentId], agent)
 			end
 
-			-- Occasionally show an action bubble
+			-- Check for celebration trigger (action changed to rolling_gacha)
+			local currentAction = agentActions[agentId] and agentActions[agentId].currentAction or ""
+			local prevAction = previousActions[agentId] or ""
+			if currentAction == "rolling_gacha" and prevAction ~= "rolling_gacha" then
+				local model = agentModels[agentId]
+				if model then
+					playCelebration(model)
+				end
+			end
+			previousActions[agentId] = currentAction
+
+			-- Occasionally show an action bubble with AI reasoning
 			local now = tick()
 			if not lastBubbleTime[agentId] or (now - lastBubbleTime[agentId]) >= BUBBLE_INTERVAL then
 				lastBubbleTime[agentId] = now
-				local phrases = actionPhrases[agent.strategy] or actionPhrases[1]
-				local phrase = phrases[math.random(1, #phrases)]
 				local model = agentModels[agentId]
 				if model then
-					showActionBubble(model, phrase, 4)
+					-- Prefer AI reasoning text, fall back to hardcoded phrases
+					local actionData = agentActions[agentId]
+					local bubbleText: string
+					if actionData and actionData.reasoning and actionData.reasoning ~= "" then
+						bubbleText = actionData.reasoning
+					else
+						local phrases = actionPhrases[agent.strategy] or actionPhrases[1]
+						bubbleText = phrases[math.random(1, #phrases)]
+					end
+					showActionBubble(model, bubbleText, 5)
 				end
 			end
 		end

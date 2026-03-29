@@ -1,4 +1,6 @@
 local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 print("[WorldBuilder] Generating cyberpunk city world...")
 
@@ -415,6 +417,26 @@ for _, resInfo in ipairs(resourceTypes) do
 		label.Font = Enum.Font.GothamBold
 		label.Text = resInfo.name
 		label.Parent = billboard
+
+		-- Resource node particle effect
+		local particles = Instance.new("ParticleEmitter")
+		particles.Rate = 3
+		particles.Lifetime = NumberRange.new(1, 2.5)
+		particles.Speed = NumberRange.new(0.5, 2)
+		particles.SpreadAngle = Vector2.new(180, 180)
+		particles.Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.2),
+			NumberSequenceKeypoint.new(0.5, 0.4),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		particles.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.5),
+			NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		particles.Color = ColorSequence.new(resInfo.color)
+		particles.LightEmission = 1
+		particles.Parent = cube
 	end
 end
 
@@ -459,3 +481,116 @@ end
 print("[WorldBuilder] City world generation complete!")
 print(string.format("[WorldBuilder] Generated %d building plots, %d resource spawns, %d neon pillars",
 	GRID_SIZE * GRID_SIZE, #resourceTypes * 3, #pillarPositions))
+
+-- ============================================================
+-- A. Pulsing Neon Lights
+-- ============================================================
+
+local allLights = {}
+local allBeacons = {}
+
+for _, child in worldFolder:GetDescendants() do
+	if child:IsA("PointLight") and child.Parent:IsA("Part") then
+		table.insert(allLights, { light = child, phase = math.random() * math.pi * 2, speed = 0.5 + math.random() * 1.5 })
+	end
+	if child.Name == "Beacon" and child:IsA("Part") then
+		table.insert(allBeacons, { part = child, phase = math.random() * math.pi * 2, speed = 0.3 + math.random() * 1.0 })
+	end
+end
+
+RunService.Heartbeat:Connect(function()
+	local t = tick()
+	for _, entry in allLights do
+		entry.light.Brightness = 1.0 + 0.8 * math.sin(t * entry.speed + entry.phase)
+	end
+	for _, entry in allBeacons do
+		entry.part.Transparency = 0.1 + 0.2 * math.sin(t * entry.speed + entry.phase)
+	end
+end)
+
+print("[WorldBuilder] Pulsing neon lights initialized:", #allLights, "lights,", #allBeacons, "beacons")
+
+-- ============================================================
+-- C. Floating Holographic Particles
+-- ============================================================
+
+for i = 1, 5 do
+	local anchor = Instance.new("Part")
+	anchor.Name = "HoloAnchor_" .. i
+	anchor.Size = Vector3.new(1, 1, 1)
+	anchor.Transparency = 1
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.Position = Vector3.new(math.random(-60, 60), math.random(15, 25), math.random(-60, 60))
+	anchor.Parent = worldFolder
+
+	local holo = Instance.new("ParticleEmitter")
+	holo.Rate = 2
+	holo.Lifetime = NumberRange.new(3, 6)
+	holo.Speed = NumberRange.new(0.3, 1)
+	holo.SpreadAngle = Vector2.new(360, 360)
+	holo.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.1),
+		NumberSequenceKeypoint.new(0.5, 0.4),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	holo.Color = ColorSequence.new(Color3.fromRGB(0, 255, 220), Color3.fromRGB(180, 0, 255))
+	holo.LightEmission = 1
+	holo.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.2, 0.3),
+		NumberSequenceKeypoint.new(0.8, 0.3),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	holo.Parent = anchor
+end
+
+print("[WorldBuilder] Holographic particles spawned")
+
+-- ============================================================
+-- D. Building Evolution System
+-- ============================================================
+
+local HttpBridge = require(script.Parent:WaitForChild("HttpBridge"))
+local milestonesReached = {}
+local milestones = { 1000, 5000, 10000, 50000, 100000 }
+
+task.spawn(function()
+	while true do
+		task.wait(60)
+		local success, leaderboard = HttpBridge.getLeaderboard()
+		if success and leaderboard and type(leaderboard) == "table" then
+			local totalScore = 0
+			for _, agent in leaderboard do
+				totalScore += (agent.score or 0)
+			end
+
+			for i, threshold in milestones do
+				if totalScore >= threshold and not milestonesReached[i] then
+					milestonesReached[i] = true
+					print("[WorldBuilder] Milestone reached:", threshold, "- evolving buildings!")
+					-- Collect buildings
+					local buildings = {}
+					for _, child in buildingsFolder:GetChildren() do
+						if child:IsA("Part") and string.find(child.Name, "Building") then
+							table.insert(buildings, child)
+						end
+					end
+					-- Pick up to 3 random buildings to grow
+					for j = 1, math.min(3, #buildings) do
+						local bldg = buildings[math.random(1, #buildings)]
+						local growAmount = 5 + math.random(0, 10)
+						local newSize = bldg.Size + Vector3.new(0, growAmount, 0)
+						local newPos = bldg.Position + Vector3.new(0, growAmount / 2, 0)
+						TweenService:Create(bldg, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+							Size = newSize,
+							Position = newPos,
+						}):Play()
+					end
+				end
+			end
+		end
+	end
+end)
+
+print("[WorldBuilder] Building evolution system initialized")

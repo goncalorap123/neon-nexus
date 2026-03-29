@@ -247,14 +247,22 @@ local function updateActivityFeed(entries: any)
 			end
 		end
 
+		-- Determine display text and color based on action type
+		local displayText = timeStr .. " - " .. action
+		local textColor = Color3.fromRGB(180, 180, 210)
+		if entry.action == "ai_decision" then
+			displayText = timeStr .. " - [AI] " .. action
+			textColor = Color3.fromRGB(0, 255, 220)
+		end
+
 		local lbl = Instance.new("TextLabel")
 		lbl.Name = "Activity" .. i
 		lbl.Size = UDim2.new(1, 0, 0, 18)
 		lbl.BackgroundTransparency = 1
-		lbl.TextColor3 = Color3.fromRGB(180, 180, 210)
+		lbl.TextColor3 = textColor
 		lbl.TextSize = 11
 		lbl.Font = Enum.Font.Gotham
-		lbl.Text = timeStr .. " - " .. action
+		lbl.Text = displayText
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.TextTruncate = Enum.TextTruncate.AtEnd
 		lbl.LayoutOrder = i
