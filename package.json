@@ -7,7 +7,9 @@
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npx hardhat test",
+    "test:backend": "cd backend && jest --verbose",
+    "test:all": "npx hardhat test && cd backend && jest --verbose"
   },
   "keywords": [],
   "author": "",
