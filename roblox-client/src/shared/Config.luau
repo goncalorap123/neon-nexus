@@ -1,7 +1,7 @@
 local Config = {}
 
 -- Backend API URL (replace with your actual NestJS backend URL)
-Config.BACKEND_URL = "https://your-nestjs-backend.com/api"
+Config.BACKEND_URL = "http://localhost:3000/api"
 
 -- Strategy constants
 Config.STRATEGY_CONSERVATIVE = 0
