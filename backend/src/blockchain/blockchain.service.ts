@@ -2,24 +2,30 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ethers } from 'ethers';
 import { getEnvConfig } from '../config/env.config';
 
-// Minimal ABI placeholders - replace with full ABIs after contract compilation
 const NEON_NEXUS_ABI = [
-  'function registerAgent(address agent) external',
-  'function deposit(address agent, uint256 amount) external',
-  'function distributeYield(address[] calldata agents, uint256[] calldata amounts) external',
-  'function setStrategy(address agent, uint8 strategy) external',
-  'function getAgent(address agent) external view returns (tuple(address wallet, uint256 balance, uint8 strategy, bool active))',
-  'function mintResources(address agent, uint256 amount) external',
+  'function registerAgent(address player, address agentWallet) external',
+  'function deposit(address agentWallet, uint256 amount) external',
+  'function withdraw(address agentWallet, uint256 amount) external',
+  'function distributeYield(address agentWallet, uint256 yieldAmount) external',
+  'function setStrategy(address agentWallet, uint8 strategyType) external',
+  'function getAgent(address agentWallet) external view returns (tuple(address wallet, uint256 deposit, uint256 yieldEarned, uint256 lastHarvest, uint8 strategyType, bool active))',
+  'function totalDeposits() external view returns (uint256)',
 ];
 
 const RANDOM_EVENTS_ABI = [
-  'function commitEvent(bytes32 commitment) external',
-  'function revealEvent(uint256 secret) external returns (uint256 eventType)',
+  'function commitEvent(address agent, uint8 eventType) external returns (uint256)',
+  'function revealEvent(address agent) external returns (uint256)',
+  'function activeRequest(address agent) external view returns (uint256)',
 ];
 
 const AGENT_TRADING_ABI = [
-  'function createOffer(uint256 resourceType, uint256 amount, uint256 price) external returns (uint256 offerId)',
-  'function executeTrade(uint256 offerId) external',
+  'function createOffer(address seller, uint8 resourceType, uint256 quantity, uint256 pricePerUnit) external returns (uint256)',
+  'function executeTrade(address buyer, uint256 offerId, uint256 quantity) external',
+  'function mintResources(address agent, uint8 resourceType, uint256 quantity) external',
+  'function cancelOffer(uint256 offerId) external',
+  'function agentResources(address agent, uint8 resourceType) external view returns (uint256)',
+  'function offers(uint256 offerId) external view returns (address seller, uint8 resourceType, uint256 quantity, uint256 pricePerUnit, bool active)',
+  'function nextOfferId() external view returns (uint256)',
 ];
 
 @Injectable()
@@ -56,48 +62,60 @@ export class BlockchainService implements OnModuleInit {
     return this.provider;
   }
 
-  encodeRegisterAgent(agentAddress: string): string {
-    return this.neonNexus.interface.encodeFunctionData('registerAgent', [agentAddress]);
+  // NeonNexus encode methods
+  encodeRegisterAgent(player: string, agentWallet: string): string {
+    return this.neonNexus.interface.encodeFunctionData('registerAgent', [player, agentWallet]);
   }
 
-  encodeDeposit(agentAddress: string, amount: bigint): string {
-    return this.neonNexus.interface.encodeFunctionData('deposit', [agentAddress, amount]);
+  encodeDeposit(agentWallet: string, amount: bigint): string {
+    return this.neonNexus.interface.encodeFunctionData('deposit', [agentWallet, amount]);
   }
 
-  encodeDistributeYield(agents: string[], amounts: bigint[]): string {
-    return this.neonNexus.interface.encodeFunctionData('distributeYield', [agents, amounts]);
+  encodeDistributeYield(agentWallet: string, yieldAmount: bigint): string {
+    return this.neonNexus.interface.encodeFunctionData('distributeYield', [agentWallet, yieldAmount]);
   }
 
-  encodeSetStrategy(agentAddress: string, strategy: number): string {
-    return this.neonNexus.interface.encodeFunctionData('setStrategy', [agentAddress, strategy]);
+  encodeSetStrategy(agentWallet: string, strategyType: number): string {
+    return this.neonNexus.interface.encodeFunctionData('setStrategy', [agentWallet, strategyType]);
   }
 
-  encodeMintResources(agentAddress: string, amount: bigint): string {
-    return this.neonNexus.interface.encodeFunctionData('mintResources', [agentAddress, amount]);
+  // RandomEvents encode methods
+  encodeCommitEvent(agent: string, eventType: number): string {
+    return this.randomEvents.interface.encodeFunctionData('commitEvent', [agent, eventType]);
   }
 
-  encodeCommitEvent(commitment: string): string {
-    return this.randomEvents.interface.encodeFunctionData('commitEvent', [commitment]);
+  encodeRevealEvent(agent: string): string {
+    return this.randomEvents.interface.encodeFunctionData('revealEvent', [agent]);
   }
 
-  encodeRevealEvent(secret: bigint): string {
-    return this.randomEvents.interface.encodeFunctionData('revealEvent', [secret]);
+  // AgentTrading encode methods
+  encodeCreateOffer(seller: string, resourceType: number, quantity: bigint, pricePerUnit: bigint): string {
+    return this.agentTrading.interface.encodeFunctionData('createOffer', [seller, resourceType, quantity, pricePerUnit]);
   }
 
-  encodeCreateOffer(resourceType: bigint, amount: bigint, price: bigint): string {
-    return this.agentTrading.interface.encodeFunctionData('createOffer', [
-      resourceType,
-      amount,
-      price,
-    ]);
+  encodeExecuteTrade(buyer: string, offerId: bigint, quantity: bigint): string {
+    return this.agentTrading.interface.encodeFunctionData('executeTrade', [buyer, offerId, quantity]);
   }
 
-  encodeExecuteTrade(offerId: bigint): string {
-    return this.agentTrading.interface.encodeFunctionData('executeTrade', [offerId]);
+  encodeMintResources(agent: string, resourceType: number, quantity: bigint): string {
+    return this.agentTrading.interface.encodeFunctionData('mintResources', [agent, resourceType, quantity]);
   }
 
-  async getAgent(agentAddress: string): Promise<any> {
-    return this.neonNexus.getAgent(agentAddress);
+  // Read methods
+  async getAgent(agentWallet: string): Promise<any> {
+    return this.neonNexus.getAgent(agentWallet);
+  }
+
+  async getAgentResources(agent: string, resourceType: number): Promise<bigint> {
+    return this.agentTrading.agentResources(agent, resourceType);
+  }
+
+  async getOffer(offerId: number): Promise<any> {
+    return this.agentTrading.offers(offerId);
+  }
+
+  async getNextOfferId(): Promise<bigint> {
+    return this.agentTrading.nextOfferId();
   }
 
   getNeonNexusAddress(): string {
