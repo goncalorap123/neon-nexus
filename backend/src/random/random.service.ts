@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ethers } from 'ethers';
 import { PrivyService } from '../privy/privy.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { getEnvConfig } from '../config/env.config';
@@ -11,26 +10,24 @@ export class RandomService {
     private readonly blockchainService: BlockchainService,
   ) {}
 
-  async commitEvent(walletId: string, secret: bigint): Promise<{ txHash: string; commitment: string }> {
+  async commitEvent(walletAddress: string, agentAddress: string, eventType: number): Promise<{ txHash: string }> {
     const config = getEnvConfig();
-    const commitment = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [secret]));
-
-    const data = this.blockchainService.encodeCommitEvent(commitment);
+    const data = this.blockchainService.encodeCommitEvent(agentAddress, eventType);
     const tx = await this.privyService.sendTransaction(
-      walletId,
+      walletAddress,
       this.blockchainService.getRandomEventsAddress(),
       data,
       config.FLOW_CHAIN_ID,
     );
 
-    return { txHash: tx.hash, commitment };
+    return { txHash: tx.hash };
   }
 
-  async revealEvent(walletId: string, secret: bigint): Promise<{ txHash: string }> {
+  async revealEvent(walletAddress: string, agentAddress: string): Promise<{ txHash: string }> {
     const config = getEnvConfig();
-    const data = this.blockchainService.encodeRevealEvent(secret);
+    const data = this.blockchainService.encodeRevealEvent(agentAddress);
     const tx = await this.privyService.sendTransaction(
-      walletId,
+      walletAddress,
       this.blockchainService.getRandomEventsAddress(),
       data,
       config.FLOW_CHAIN_ID,

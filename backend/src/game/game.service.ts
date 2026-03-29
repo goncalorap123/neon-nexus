@@ -5,9 +5,6 @@ import { BlockchainService } from '../blockchain/blockchain.service';
 
 @Injectable()
 export class GameService {
-  // In-memory store for pending random event secrets
-  private pendingSecrets = new Map<string, bigint>();
-
   constructor(
     private readonly agentService: AgentService,
     private readonly randomService: RandomService,
@@ -22,20 +19,21 @@ export class GameService {
 
     return {
       player: agent,
-      hasPendingEvent: this.pendingSecrets.has(playerId),
     };
   }
 
-  async triggerRandomEvent(playerId: string): Promise<{ txHash: string; commitment: string }> {
+  async triggerRandomEvent(playerId: string, eventType: number): Promise<{ txHash: string }> {
     const walletInfo = this.agentService.getWalletInfo(playerId);
     if (!walletInfo) {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    const secret = BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
-    this.pendingSecrets.set(playerId, secret);
-
-    const result = await this.randomService.commitEvent(walletInfo.walletId, secret);
+    // Commit phase: requests randomness on-chain via CadenceRandomConsumer
+    const result = await this.randomService.commitEvent(
+      walletInfo.address,
+      walletInfo.address,
+      eventType,
+    );
     return result;
   }
 
@@ -45,13 +43,11 @@ export class GameService {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    const secret = this.pendingSecrets.get(playerId);
-    if (!secret) {
-      throw new Error(`No pending event for player ${playerId}`);
-    }
-
-    const result = await this.randomService.revealEvent(walletInfo.walletId, secret);
-    this.pendingSecrets.delete(playerId);
+    // Reveal phase: must be called in a later block than commit
+    const result = await this.randomService.revealEvent(
+      walletInfo.address,
+      walletInfo.address,
+    );
     return result;
   }
 
@@ -67,10 +63,10 @@ export class GameService {
     return agents
       .filter((a) => a !== null)
       .sort((a, b) => {
-        const balA = a.onChain?.balance ?? 0n;
-        const balB = b.onChain?.balance ?? 0n;
-        if (balB > balA) return 1;
-        if (balB < balA) return -1;
+        const depA = a.onChain?.deposit ?? 0n;
+        const depB = b.onChain?.deposit ?? 0n;
+        if (depB > depA) return 1;
+        if (depB < depA) return -1;
         return 0;
       });
   }

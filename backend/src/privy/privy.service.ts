@@ -12,10 +12,8 @@ export class PrivyService implements OnModuleInit {
   }
 
   async createWallet(): Promise<{ id: string; address: string }> {
-    const config = getEnvConfig();
     const wallet = await this.client.walletApi.create({
       chainType: 'ethereum',
-      authorizationKeyIds: undefined,
     });
     return { id: wallet.id, address: wallet.address };
   }
@@ -26,23 +24,20 @@ export class PrivyService implements OnModuleInit {
   }
 
   async sendTransaction(
-    walletId: string,
+    walletAddress: string,
     to: string,
     data: string,
     chainId: number,
   ): Promise<{ hash: string }> {
-    const config = getEnvConfig();
-    const result = await this.client.walletApi.rpc({
-      walletId,
-      method: 'eth_sendTransaction',
+    const result = await this.client.walletApi.ethereum.sendTransaction({
+      address: walletAddress,
+      chainType: 'ethereum',
       caip2: `eip155:${chainId}`,
-      params: {
-        transaction: {
-          to,
-          data,
-        },
+      transaction: {
+        to: to as `0x${string}`,
+        data: data as `0x${string}`,
       },
     });
-    return { hash: result.data.hash };
+    return { hash: result.hash };
   }
 }

@@ -15,8 +15,8 @@ export class GameController {
   }
 
   @Post('random-event')
-  async triggerRandomEvent(@Body() body: { playerId: string }) {
-    const result = await this.gameService.triggerRandomEvent(body.playerId);
+  async triggerRandomEvent(@Body() body: { playerId: string; eventType: number }) {
+    const result = await this.gameService.triggerRandomEvent(body.playerId, body.eventType);
     return { success: true, data: result };
   }
 

@@ -18,7 +18,9 @@ export class AgentService {
     this.playerWallets.set(playerId, { walletId: wallet.id, address: wallet.address });
 
     const config = getEnvConfig();
-    const data = this.blockchainService.encodeRegisterAgent(wallet.address);
+    // Use the agent wallet as both player and agent address for on-chain registration
+    // (player address is a Roblox ID mapped off-chain; on-chain we just need the wallet registered)
+    const data = this.blockchainService.encodeRegisterAgent(wallet.address, wallet.address);
     const tx = await this.privyService.sendTransaction(
       wallet.id,
       this.blockchainService.getNeonNexusAddress(),
