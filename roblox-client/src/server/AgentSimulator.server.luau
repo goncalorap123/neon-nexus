@@ -205,18 +205,25 @@ end
 
 -- Main simulation loop
 while true do
-	local success, gameState = HttpBridge.getGameState()
+	-- Use leaderboard endpoint to get all agents (no playerId needed)
+	local success, agents = HttpBridge.getLeaderboard()
 
-	if success and gameState then
-		local agents = gameState.agents
-		if agents then
-			local activeIds: { [string]: boolean } = {}
+	if success and agents and type(agents) == "table" then
+		local activeIds: { [string]: boolean } = {}
 
-			for _, agent in ipairs(agents) do
-				local agentId = agent.id or "unknown"
+		for _, agentData in ipairs(agents) do
+			-- Map backend response to agent format
+			local agent = {
+				id = agentData.playerId or "unknown",
+				name = agentData.playerId or "Agent",
+				strategy = agentData.onChain and agentData.onChain.strategyType or 1,
+				score = agentData.onChain and tonumber(agentData.onChain.deposit) or 0,
+				alive = agentData.onChain and agentData.onChain.active or true,
+			}
+			local agentId = agent.id
 
-				-- Skip dead agents
-				if agent.alive == false then
+			-- Skip dead agents
+			if agent.alive == false then
 					if agentModels[agentId] then
 						print("[AgentSimulator] Agent died, removing model:", agentId)
 						agentModels[agentId]:Destroy()

@@ -46,9 +46,14 @@ function HttpBridge.request(method: string, path: string, body: any?): (boolean,
 		return true, response.Body
 	end
 
-	-- Backend wraps responses in { success, data } — unwrap automatically
-	if type(decoded) == "table" and decoded.success and decoded.data then
-		return true, decoded.data
+	-- Backend wraps responses in { success, data }
+	if type(decoded) == "table" then
+		if decoded.success == false then
+			return false, decoded.error or "Unknown error"
+		end
+		if decoded.success == true and decoded.data ~= nil then
+			return true, decoded.data
+		end
 	end
 
 	return true, decoded
@@ -94,7 +99,7 @@ function HttpBridge.getGameState(playerId: string)
 	return HttpBridge.request("GET", "/game/state/" .. playerId)
 end
 
--- Get the leaderboard
+-- Get the leaderboard (returns all agents)
 function HttpBridge.getLeaderboard()
 	return HttpBridge.request("GET", "/game/leaderboard")
 end
