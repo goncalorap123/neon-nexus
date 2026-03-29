@@ -7,3 +7,7 @@ typechain-types/
 coverage/
 coverage.json
 dist/
+*.db
+backend/dist/
+backend/node_modules/
+*.DS_Store

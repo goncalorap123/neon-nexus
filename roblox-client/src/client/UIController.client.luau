@@ -11,6 +11,9 @@ local SetStrategyRF = Remotes:WaitForChild("SetStrategy") :: RemoteFunction
 local GetGameStateRF = Remotes:WaitForChild("GetGameState") :: RemoteFunction
 local TriggerEventRF = Remotes:WaitForChild("TriggerEvent") :: RemoteFunction
 local GetLeaderboardRF = Remotes:WaitForChild("GetLeaderboard") :: RemoteFunction
+local GetTradeOffersRF = Remotes:WaitForChild("GetTradeOffers") :: RemoteFunction
+local CreateTradeOfferRF = Remotes:WaitForChild("CreateTradeOffer") :: RemoteFunction
+local ExecuteTradeRF = Remotes:WaitForChild("ExecuteTrade") :: RemoteFunction
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local Utils = require(ReplicatedStorage:WaitForChild("Utils"))
@@ -155,6 +158,370 @@ for i = 1, 10 do
 	table.insert(leaderboardLabels, lbl)
 end
 
+-- Forward declarations for functions referenced in trade UI callbacks
+local refreshGameState
+local refreshTradeOffers
+
+-- ============================================================
+-- Trade Marketplace Panel (right side, below leaderboard)
+-- ============================================================
+
+local tradeFrame = createFrame("TradeFrame", UDim2.new(1, -270, 0, 320), UDim2.new(0, 260, 0, 380))
+
+createLabel(tradeFrame, "Title", UDim2.new(0, 10, 0, 5), UDim2.new(1, -20, 0, 25), "TRADE MARKETPLACE")
+
+-- Scrolling area for trade offers
+local tradeListFrame = Instance.new("ScrollingFrame")
+tradeListFrame.Name = "TradeList"
+tradeListFrame.Position = UDim2.new(0, 5, 0, 30)
+tradeListFrame.Size = UDim2.new(1, -10, 0, 155)
+tradeListFrame.BackgroundTransparency = 0.8
+tradeListFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+tradeListFrame.BorderSizePixel = 0
+tradeListFrame.ScrollBarThickness = 4
+tradeListFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 200, 255)
+tradeListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+tradeListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+tradeListFrame.Parent = tradeFrame
+
+local tradeListLayout = Instance.new("UIListLayout")
+tradeListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tradeListLayout.Padding = UDim.new(0, 2)
+tradeListLayout.Parent = tradeListFrame
+
+local noTradesLabel = createLabel(tradeListFrame, "NoTrades", UDim2.new(0, 5, 0, 0), UDim2.new(1, -10, 0, 25), "No active offers")
+noTradesLabel.TextXAlignment = Enum.TextXAlignment.Center
+noTradesLabel.TextColor3 = Color3.fromRGB(120, 120, 140)
+noTradesLabel.TextSize = 12
+
+-- Divider
+local tradeDivider = Instance.new("Frame")
+tradeDivider.Name = "Divider"
+tradeDivider.Position = UDim2.new(0, 10, 0, 190)
+tradeDivider.Size = UDim2.new(1, -20, 0, 1)
+tradeDivider.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+tradeDivider.BackgroundTransparency = 0.5
+tradeDivider.BorderSizePixel = 0
+tradeDivider.Parent = tradeFrame
+
+createLabel(tradeFrame, "CreateTitle", UDim2.new(0, 10, 0, 196), UDim2.new(1, -20, 0, 20), "CREATE OFFER")
+
+-- Offer resource selector
+createLabel(tradeFrame, "OfferLabel", UDim2.new(0, 10, 0, 218), UDim2.new(0, 50, 0, 18), "Sell:")
+local offerWoodBtn = createButton(tradeFrame, "OfferWood", UDim2.new(0, 50, 0, 216), UDim2.new(0, 45, 0, 22), "Wood")
+local offerSteelBtn = createButton(tradeFrame, "OfferSteel", UDim2.new(0, 98, 0, 216), UDim2.new(0, 45, 0, 22), "Steel")
+local offerEnergyBtn = createButton(tradeFrame, "OfferEnergy", UDim2.new(0, 146, 0, 216), UDim2.new(0, 50, 0, 22), "Energy")
+local offerFoodBtn = createButton(tradeFrame, "OfferFood", UDim2.new(0, 199, 0, 216), UDim2.new(0, 45, 0, 22), "Food")
+
+offerWoodBtn.TextSize = 11
+offerSteelBtn.TextSize = 11
+offerEnergyBtn.TextSize = 11
+offerFoodBtn.TextSize = 11
+
+offerWoodBtn.BackgroundColor3 = Color3.fromRGB(120, 70, 30)
+offerSteelBtn.BackgroundColor3 = Color3.fromRGB(100, 105, 110)
+offerEnergyBtn.BackgroundColor3 = Color3.fromRGB(160, 140, 20)
+offerFoodBtn.BackgroundColor3 = Color3.fromRGB(30, 120, 40)
+
+-- Request resource selector
+createLabel(tradeFrame, "RequestLabel", UDim2.new(0, 10, 0, 244), UDim2.new(0, 50, 0, 18), "Want:")
+local reqWoodBtn = createButton(tradeFrame, "ReqWood", UDim2.new(0, 50, 0, 242), UDim2.new(0, 45, 0, 22), "Wood")
+local reqSteelBtn = createButton(tradeFrame, "ReqSteel", UDim2.new(0, 98, 0, 242), UDim2.new(0, 45, 0, 22), "Steel")
+local reqEnergyBtn = createButton(tradeFrame, "ReqEnergy", UDim2.new(0, 146, 0, 242), UDim2.new(0, 50, 0, 22), "Energy")
+local reqFoodBtn = createButton(tradeFrame, "ReqFood", UDim2.new(0, 199, 0, 242), UDim2.new(0, 45, 0, 22), "Food")
+
+reqWoodBtn.TextSize = 11
+reqSteelBtn.TextSize = 11
+reqEnergyBtn.TextSize = 11
+reqFoodBtn.TextSize = 11
+
+reqWoodBtn.BackgroundColor3 = Color3.fromRGB(120, 70, 30)
+reqSteelBtn.BackgroundColor3 = Color3.fromRGB(100, 105, 110)
+reqEnergyBtn.BackgroundColor3 = Color3.fromRGB(160, 140, 20)
+reqFoodBtn.BackgroundColor3 = Color3.fromRGB(30, 120, 40)
+
+-- Amount selectors
+createLabel(tradeFrame, "OfferAmtLabel", UDim2.new(0, 10, 0, 272), UDim2.new(0, 70, 0, 18), "Sell Qty:")
+local offerAmountBox = Instance.new("TextBox")
+offerAmountBox.Name = "OfferAmountBox"
+offerAmountBox.Position = UDim2.new(0, 80, 0, 270)
+offerAmountBox.Size = UDim2.new(0, 50, 0, 22)
+offerAmountBox.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+offerAmountBox.TextColor3 = Color3.fromRGB(220, 220, 255)
+offerAmountBox.PlaceholderText = "10"
+offerAmountBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+offerAmountBox.Text = "10"
+offerAmountBox.TextSize = 13
+offerAmountBox.Font = Enum.Font.Gotham
+offerAmountBox.BorderSizePixel = 0
+offerAmountBox.ClearTextOnFocus = false
+offerAmountBox.Parent = tradeFrame
+
+local offerAmtCorner = Instance.new("UICorner")
+offerAmtCorner.CornerRadius = UDim.new(0, 4)
+offerAmtCorner.Parent = offerAmountBox
+
+createLabel(tradeFrame, "ReqAmtLabel", UDim2.new(0, 140, 0, 272), UDim2.new(0, 65, 0, 18), "Want Qty:")
+local reqAmountBox = Instance.new("TextBox")
+reqAmountBox.Name = "ReqAmountBox"
+reqAmountBox.Position = UDim2.new(0, 205, 0, 270)
+reqAmountBox.Size = UDim2.new(0, 40, 0, 22)
+reqAmountBox.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+reqAmountBox.TextColor3 = Color3.fromRGB(220, 220, 255)
+reqAmountBox.PlaceholderText = "10"
+reqAmountBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 120)
+reqAmountBox.Text = "10"
+reqAmountBox.TextSize = 13
+reqAmountBox.Font = Enum.Font.Gotham
+reqAmountBox.BorderSizePixel = 0
+reqAmountBox.ClearTextOnFocus = false
+reqAmountBox.Parent = tradeFrame
+
+local reqAmtCorner = Instance.new("UICorner")
+reqAmtCorner.CornerRadius = UDim.new(0, 4)
+reqAmtCorner.Parent = reqAmountBox
+
+-- Selection state label
+local selectionLabel = createLabel(tradeFrame, "SelectionLabel", UDim2.new(0, 10, 0, 298), UDim2.new(1, -20, 0, 18), "Sell: Wood | Want: Steel")
+selectionLabel.TextSize = 11
+selectionLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+selectionLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+-- List Offer button
+local listOfferBtn = createButton(tradeFrame, "ListOffer", UDim2.new(0, 10, 0, 320), UDim2.new(1, -20, 0, 30), "LIST OFFER")
+listOfferBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+
+-- Trade status label
+local tradeStatusLabel = createLabel(tradeFrame, "TradeStatus", UDim2.new(0, 10, 0, 354), UDim2.new(1, -20, 0, 18), "")
+tradeStatusLabel.TextSize = 11
+tradeStatusLabel.TextXAlignment = Enum.TextXAlignment.Center
+tradeStatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+
+-- ============================================================
+-- Trade Panel State & Logic
+-- ============================================================
+
+local selectedOfferResource = Config.RESOURCE_WOOD
+local selectedRequestResource = Config.RESOURCE_STEEL
+
+local resourceNames = {
+	[Config.RESOURCE_WOOD] = "Wood",
+	[Config.RESOURCE_STEEL] = "Steel",
+	[Config.RESOURCE_ENERGY] = "Energy",
+	[Config.RESOURCE_FOOD] = "Food",
+}
+
+local function updateSelectionLabel()
+	selectionLabel.Text = "Sell: " .. resourceNames[selectedOfferResource] .. " | Want: " .. resourceNames[selectedRequestResource]
+end
+
+-- Highlight selected resource button
+local function highlightOfferBtn(selected: TextButton)
+	for _, btn in ipairs({ offerWoodBtn, offerSteelBtn, offerEnergyBtn, offerFoodBtn }) do
+		btn.BackgroundTransparency = if btn == selected then 0 else 0.5
+	end
+end
+
+local function highlightReqBtn(selected: TextButton)
+	for _, btn in ipairs({ reqWoodBtn, reqSteelBtn, reqEnergyBtn, reqFoodBtn }) do
+		btn.BackgroundTransparency = if btn == selected then 0 else 0.5
+	end
+end
+
+-- Initialize highlights
+highlightOfferBtn(offerWoodBtn)
+highlightReqBtn(reqSteelBtn)
+
+-- Offer resource selection handlers
+offerWoodBtn.MouseButton1Click:Connect(function()
+	selectedOfferResource = Config.RESOURCE_WOOD
+	highlightOfferBtn(offerWoodBtn)
+	updateSelectionLabel()
+end)
+offerSteelBtn.MouseButton1Click:Connect(function()
+	selectedOfferResource = Config.RESOURCE_STEEL
+	highlightOfferBtn(offerSteelBtn)
+	updateSelectionLabel()
+end)
+offerEnergyBtn.MouseButton1Click:Connect(function()
+	selectedOfferResource = Config.RESOURCE_ENERGY
+	highlightOfferBtn(offerEnergyBtn)
+	updateSelectionLabel()
+end)
+offerFoodBtn.MouseButton1Click:Connect(function()
+	selectedOfferResource = Config.RESOURCE_FOOD
+	highlightOfferBtn(offerFoodBtn)
+	updateSelectionLabel()
+end)
+
+-- Request resource selection handlers
+reqWoodBtn.MouseButton1Click:Connect(function()
+	selectedRequestResource = Config.RESOURCE_WOOD
+	highlightReqBtn(reqWoodBtn)
+	updateSelectionLabel()
+end)
+reqSteelBtn.MouseButton1Click:Connect(function()
+	selectedRequestResource = Config.RESOURCE_STEEL
+	highlightReqBtn(reqSteelBtn)
+	updateSelectionLabel()
+end)
+reqEnergyBtn.MouseButton1Click:Connect(function()
+	selectedRequestResource = Config.RESOURCE_ENERGY
+	highlightReqBtn(reqEnergyBtn)
+	updateSelectionLabel()
+end)
+reqFoodBtn.MouseButton1Click:Connect(function()
+	selectedRequestResource = Config.RESOURCE_FOOD
+	highlightReqBtn(reqFoodBtn)
+	updateSelectionLabel()
+end)
+
+-- Create a single trade offer entry in the list
+local function createTradeEntry(parent: Instance, offer: any, index: number): Frame
+	local entryFrame = Instance.new("Frame")
+	entryFrame.Name = "TradeEntry_" .. index
+	entryFrame.Size = UDim2.new(1, -4, 0, 42)
+	entryFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 45)
+	entryFrame.BackgroundTransparency = 0.3
+	entryFrame.BorderSizePixel = 0
+	entryFrame.LayoutOrder = index
+	entryFrame.Parent = parent
+
+	local entryCorner = Instance.new("UICorner")
+	entryCorner.CornerRadius = UDim.new(0, 4)
+	entryCorner.Parent = entryFrame
+
+	local sellerName = offer.fromAgentName or offer.fromAgentId or "???"
+	local offerRes = resourceNames[offer.offerResource] or "?"
+	local offerAmt = offer.offerAmount or 0
+	local reqRes = resourceNames[offer.requestResource] or "?"
+	local reqAmt = offer.requestAmount or 0
+
+	local infoLabel = Instance.new("TextLabel")
+	infoLabel.Name = "Info"
+	infoLabel.Position = UDim2.new(0, 5, 0, 2)
+	infoLabel.Size = UDim2.new(1, -60, 0, 18)
+	infoLabel.BackgroundTransparency = 1
+	infoLabel.TextColor3 = Color3.fromRGB(200, 200, 230)
+	infoLabel.TextSize = 11
+	infoLabel.Font = Enum.Font.GothamBold
+	infoLabel.Text = sellerName
+	infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+	infoLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	infoLabel.Parent = entryFrame
+
+	local detailLabel = Instance.new("TextLabel")
+	detailLabel.Name = "Detail"
+	detailLabel.Position = UDim2.new(0, 5, 0, 20)
+	detailLabel.Size = UDim2.new(1, -60, 0, 18)
+	detailLabel.BackgroundTransparency = 1
+	detailLabel.TextColor3 = Color3.fromRGB(150, 150, 180)
+	detailLabel.TextSize = 10
+	detailLabel.Font = Enum.Font.Gotham
+	detailLabel.Text = string.format("%dx %s  for  %dx %s", offerAmt, offerRes, reqAmt, reqRes)
+	detailLabel.TextXAlignment = Enum.TextXAlignment.Left
+	detailLabel.Parent = entryFrame
+
+	local buyBtn = Instance.new("TextButton")
+	buyBtn.Name = "BuyBtn"
+	buyBtn.Position = UDim2.new(1, -52, 0, 8)
+	buyBtn.Size = UDim2.new(0, 45, 0, 26)
+	buyBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 80)
+	buyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	buyBtn.TextSize = 12
+	buyBtn.Font = Enum.Font.GothamBold
+	buyBtn.Text = "Buy"
+	buyBtn.BorderSizePixel = 0
+	buyBtn.Parent = entryFrame
+
+	local buyCorner = Instance.new("UICorner")
+	buyCorner.CornerRadius = UDim.new(0, 4)
+	buyCorner.Parent = buyBtn
+
+	-- Buy handler
+	buyBtn.MouseButton1Click:Connect(function()
+		buyBtn.Text = "..."
+		local tradeId = offer.id or ""
+		local result = ExecuteTradeRF:InvokeServer(tradeId)
+		if result and result.success then
+			tradeStatusLabel.Text = "Trade completed!"
+			tradeStatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+			refreshGameState()
+		else
+			tradeStatusLabel.Text = "Trade failed"
+			tradeStatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+		end
+		buyBtn.Text = "Buy"
+		-- Clear status after a few seconds
+		task.delay(3, function()
+			tradeStatusLabel.Text = ""
+		end)
+	end)
+
+	return entryFrame
+end
+
+local function updateTradeOffersUI(offers: any)
+	-- Clear existing entries
+	for _, child in ipairs(tradeListFrame:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+
+	if not offers or #offers == 0 then
+		noTradesLabel.Visible = true
+		return
+	end
+
+	noTradesLabel.Visible = false
+
+	for i, offer in ipairs(offers) do
+		if i > 20 then break end -- cap display
+		createTradeEntry(tradeListFrame, offer, i)
+	end
+end
+
+refreshTradeOffers = function()
+	local result = GetTradeOffersRF:InvokeServer()
+	if result and result.success and result.data then
+		updateTradeOffersUI(result.data)
+	end
+end
+
+-- List Offer button handler
+listOfferBtn.MouseButton1Click:Connect(function()
+	if selectedOfferResource == selectedRequestResource then
+		tradeStatusLabel.Text = "Cannot trade same resource"
+		tradeStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+		task.delay(3, function() tradeStatusLabel.Text = "" end)
+		return
+	end
+
+	local offerAmt = tonumber(offerAmountBox.Text) or 10
+	local reqAmt = tonumber(reqAmountBox.Text) or 10
+
+	if offerAmt <= 0 or reqAmt <= 0 then
+		tradeStatusLabel.Text = "Amounts must be positive"
+		tradeStatusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+		task.delay(3, function() tradeStatusLabel.Text = "" end)
+		return
+	end
+
+	listOfferBtn.Text = "Creating..."
+	local result = CreateTradeOfferRF:InvokeServer(selectedOfferResource, offerAmt, selectedRequestResource, reqAmt)
+	if result and result.success then
+		tradeStatusLabel.Text = "Offer listed!"
+		tradeStatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+		refreshTradeOffers()
+	else
+		tradeStatusLabel.Text = result and result.error or "Failed to list offer"
+		tradeStatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+	end
+	listOfferBtn.Text = "LIST OFFER"
+	task.delay(3, function() tradeStatusLabel.Text = "" end)
+end)
+
 -- ============================================================
 -- State & Update Logic
 -- ============================================================
@@ -198,7 +565,7 @@ local function updateLeaderboardUI(entries: any)
 	end
 end
 
-local function refreshGameState()
+refreshGameState = function()
 	local result = GetGameStateRF:InvokeServer()
 	if result and result.success and result.data then
 		local agents = result.data.agents
@@ -219,6 +586,9 @@ local function refreshGameState()
 	if lbResult and lbResult.success and lbResult.data then
 		updateLeaderboardUI(lbResult.data)
 	end
+
+	-- Also refresh trade offers
+	refreshTradeOffers()
 end
 
 -- ============================================================

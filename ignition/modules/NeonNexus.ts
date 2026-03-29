@@ -1,16 +1,14 @@
 import { buildModule } from '@nomicfoundation/hardhat-ignition/modules';
 
 const NeonNexusModule = buildModule('NeonNexusModule', (m) => {
-  const depositToken = m.getParameter(
-    'depositToken',
-    '0x0000000000000000000000000000000000000000',
-  );
+  // Deploy mock stablecoin (PYUSD stand-in) for testnet
+  const mockToken = m.contract('MockERC20', ['Mock PYUSD', 'mPYUSD', 6]);
 
-  const neonNexus = m.contract('NeonNexus', [depositToken]);
+  const neonNexus = m.contract('NeonNexus', [mockToken]);
   const randomEvents = m.contract('RandomEvents');
   const agentTrading = m.contract('AgentTrading');
 
-  return { neonNexus, randomEvents, agentTrading };
+  return { mockToken, neonNexus, randomEvents, agentTrading };
 });
 
 export default NeonNexusModule;

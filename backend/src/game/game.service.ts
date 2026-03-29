@@ -3,6 +3,8 @@ import { AgentService } from '../agent/agent.service';
 import { RandomService } from '../random/random.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 
+const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
+
 @Injectable()
 export class GameService {
   constructor(
@@ -17,54 +19,58 @@ export class GameService {
       return null;
     }
 
+    const resources: Record<string, string> = {};
+    for (let i = 0; i < 4; i++) {
+      try {
+        const balance = await this.blockchainService.getAgentResources(agent.address, i);
+        resources[RESOURCE_NAMES[i]] = balance.toString();
+      } catch {
+        resources[RESOURCE_NAMES[i]] = '0';
+      }
+    }
+
     return {
       player: agent,
+      resources,
     };
   }
 
   async triggerRandomEvent(playerId: string, eventType: number): Promise<{ txHash: string }> {
-    const walletInfo = this.agentService.getWalletInfo(playerId);
+    const walletInfo = await this.agentService.getWalletInfo(playerId);
     if (!walletInfo) {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    // Commit phase: requests randomness on-chain via CadenceRandomConsumer
-    const result = await this.randomService.commitEvent(
+    return this.randomService.commitEvent(
       walletInfo.address,
       walletInfo.address,
       eventType,
     );
-    return result;
   }
 
   async revealRandomEvent(playerId: string): Promise<{ txHash: string }> {
-    const walletInfo = this.agentService.getWalletInfo(playerId);
+    const walletInfo = await this.agentService.getWalletInfo(playerId);
     if (!walletInfo) {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    // Reveal phase: must be called in a later block than commit
-    const result = await this.randomService.revealEvent(
+    return this.randomService.revealEvent(
       walletInfo.address,
       walletInfo.address,
     );
-    return result;
   }
 
   async getLeaderboard(): Promise<any[]> {
-    const playerIds = this.agentService.getAllPlayerIds();
+    const playerIds = await this.agentService.getAllPlayerIds();
     const agents = await Promise.all(
-      playerIds.map(async (id) => {
-        const agent = await this.agentService.getAgent(id);
-        return agent;
-      }),
+      playerIds.map((id) => this.agentService.getAgent(id)),
     );
 
     return agents
       .filter((a) => a !== null)
       .sort((a, b) => {
-        const depA = a.onChain?.deposit ?? 0n;
-        const depB = b.onChain?.deposit ?? 0n;
+        const depA = BigInt(a.onChain?.deposit ?? 0);
+        const depB = BigInt(b.onChain?.deposit ?? 0);
         if (depB > depA) return 1;
         if (depB < depA) return -1;
         return 0;
