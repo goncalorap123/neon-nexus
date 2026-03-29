@@ -4,7 +4,7 @@ local RunService = game:GetService("RunService")
 local UPDATE_INTERVAL = 15 -- seconds between updates
 local SPAWN_RANGE = 80 -- NPCs spawn within -80 to 80 on X/Z
 local GROUND_Y = 3 -- Y position for NPCs
-local MOVE_SPEED = 0.08 -- lerp factor for smooth movement
+local MOVE_SPEED = 8 -- studs per second for NPC walking
 local BUBBLE_INTERVAL = 20 -- seconds between action bubbles
 
 print("[AgentSimulator] Starting agent simulation loop...")
@@ -13,6 +13,56 @@ print("[AgentSimulator] Starting agent simulation loop...")
 local agentFolder = Instance.new("Folder")
 agentFolder.Name = "AgentNPCs"
 agentFolder.Parent = workspace
+
+-- Raycast params for obstacle detection (exclude NPC folder)
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.FilterDescendantsInstances = { agentFolder }
+
+local OBSTACLE_CHECK_DIST = 4 -- how far ahead to check for walls
+local STEER_ANGLE = math.rad(60) -- angle to steer when blocked
+
+-- Check if a direction is blocked by a wall/building
+local function isBlocked(origin: Vector3, direction: Vector3): boolean
+	local result = workspace:Raycast(origin, direction.Unit * OBSTACLE_CHECK_DIST, rayParams)
+	return result ~= nil
+end
+
+-- Find an unblocked movement direction, steering around obstacles
+local function avoidObstacles(origin: Vector3, desiredDir: Vector3): Vector3
+	-- Check straight ahead
+	if not isBlocked(origin, desiredDir) then
+		return desiredDir
+	end
+
+	-- Try steering left and right at increasing angles
+	for _, angle in { STEER_ANGLE, STEER_ANGLE * 2, STEER_ANGLE * 3 } do
+		-- Rotate left
+		local cosA = math.cos(angle)
+		local sinA = math.sin(angle)
+		local leftDir = Vector3.new(
+			desiredDir.X * cosA - desiredDir.Z * sinA,
+			0,
+			desiredDir.X * sinA + desiredDir.Z * cosA
+		)
+		if not isBlocked(origin, leftDir) then
+			return leftDir.Unit
+		end
+
+		-- Rotate right
+		local rightDir = Vector3.new(
+			desiredDir.X * cosA + desiredDir.Z * sinA,
+			0,
+			-desiredDir.X * sinA + desiredDir.Z * cosA
+		)
+		if not isBlocked(origin, rightDir) then
+			return rightDir.Unit
+		end
+	end
+
+	-- Completely blocked — reverse
+	return -desiredDir.Unit
+end
 
 -- Track known agents and their corresponding 3D models
 local agentModels: { [string]: Model } = {}
@@ -40,6 +90,13 @@ local wanderTargets: { [string]: Vector3 } = {}
 
 -- Track movement state per agent
 local isMoving: { [string]: boolean } = {}
+
+-- Facing direction per agent (unit vector on XZ plane)
+local agentFacing: { [string]: Vector3 } = {}
+
+-- Linger timer: when the agent arrived, and how long to stay
+local arrivalTime: { [string]: number } = {}
+local lingerDuration: { [string]: number } = {}
 
 -- Track last action bubble time per agent
 local lastBubbleTime: { [string]: number } = {}
@@ -444,29 +501,47 @@ local function createNPCModel(agentData: any): Model
 	return model
 end
 
--- Position all limbs relative to a torso position
-local function positionLimbs(model: Model, basePos: Vector3, animOffsets: { la: number, ra: number, ll: number, rl: number, headBob: number })
+-- Position all limbs relative to torso, oriented along facing direction
+local function positionLimbs(model: Model, basePos: Vector3, facing: Vector3, animOffsets: { la: number, ra: number, ll: number, rl: number, headBob: number })
+	-- Build orientation from facing direction
+	local lookDir = Vector3.new(facing.X, 0, facing.Z)
+	if lookDir.Magnitude < 0.01 then
+		lookDir = Vector3.new(0, 0, -1) -- default facing
+	end
+	lookDir = lookDir.Unit
+
+	-- Right vector = cross(lookDir, up)
+	local rightDir = lookDir:Cross(Vector3.new(0, 1, 0)).Unit
+
 	local head = model:FindFirstChild("Head") :: Part?
 	local leftArm = model:FindFirstChild("LeftArm") :: Part?
 	local rightArm = model:FindFirstChild("RightArm") :: Part?
 	local leftLeg = model:FindFirstChild("LeftLeg") :: Part?
 	local rightLeg = model:FindFirstChild("RightLeg") :: Part?
 	local auraRing = model:FindFirstChild("AuraRing") :: Part?
+	local torso = model:FindFirstChild("Torso") :: Part?
+
+	-- Rotate torso to face movement direction
+	if torso then
+		torso.CFrame = CFrame.lookAt(basePos, basePos + lookDir)
+	end
 
 	if head then
 		head.Position = basePos + Vector3.new(0, 1.9 + animOffsets.headBob, 0)
 	end
+	-- Arms swing forward/back along look direction
 	if leftArm then
-		leftArm.Position = basePos + Vector3.new(-1.3, -0.1, animOffsets.la)
+		leftArm.Position = basePos - rightDir * 1.3 + Vector3.new(0, -0.1, 0) + lookDir * animOffsets.la
 	end
 	if rightArm then
-		rightArm.Position = basePos + Vector3.new(1.3, -0.1, animOffsets.ra)
+		rightArm.Position = basePos + rightDir * 1.3 + Vector3.new(0, -0.1, 0) + lookDir * animOffsets.ra
 	end
+	-- Legs swing forward/back along look direction
 	if leftLeg then
-		leftLeg.Position = basePos + Vector3.new(-0.5, -2.3, animOffsets.ll)
+		leftLeg.Position = basePos - rightDir * 0.5 + Vector3.new(0, -2.3, 0) + lookDir * animOffsets.ll
 	end
 	if rightLeg then
-		rightLeg.Position = basePos + Vector3.new(0.5, -2.3, animOffsets.rl)
+		rightLeg.Position = basePos + rightDir * 0.5 + Vector3.new(0, -2.3, 0) + lookDir * animOffsets.rl
 	end
 	if auraRing then
 		auraRing.Position = basePos + Vector3.new(0, -2.3, 0)
@@ -550,38 +625,74 @@ local function updateAgentModel(model: Model, agentData: any)
 end
 
 -- Movement + walking animation system via Heartbeat (runs every frame)
-RunService.Heartbeat:Connect(function()
+RunService.Heartbeat:Connect(function(dt)
 	local t = tick()
 	for agentId, model in agentModels do
 		local torso = model:FindFirstChild("Torso") :: Part?
 		if not torso then continue end
 
-		-- Move torso toward wander target
+		local currentPos = torso.Position
 		local target = wanderTargets[agentId]
+
+		-- Initialize facing if not set
+		if not agentFacing[agentId] then
+			agentFacing[agentId] = Vector3.new(0, 0, -1)
+		end
+
 		if target then
-			local currentPos = torso.Position
-			local dist = (Vector3.new(target.X, 0, target.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
+			local diff = Vector3.new(target.X - currentPos.X, 0, target.Z - currentPos.Z)
+			local dist = diff.Magnitude
 
 			if dist < 2 then
-				-- Arrived at target — stop moving, pick new random wander
+				-- Arrived at target
+				if not arrivalTime[agentId] then
+					-- Just arrived — start lingering
+					arrivalTime[agentId] = t
+					-- Linger 4-10 seconds at action targets, 2-5 for idle wander
+					local actionData = agentActions[agentId]
+					local hasAction = actionData and actionData.currentAction and actionData.currentAction ~= "idle"
+					lingerDuration[agentId] = if hasAction then (4 + math.random() * 6) else (2 + math.random() * 3)
+				end
+
 				isMoving[agentId] = false
-				wanderTargets[agentId] = Vector3.new(
-					math.clamp(currentPos.X + math.random(-15, 15), -SPAWN_RANGE, SPAWN_RANGE),
-					GROUND_Y,
-					math.clamp(currentPos.Z + math.random(-15, 15), -SPAWN_RANGE, SPAWN_RANGE)
-				)
+
+				-- Check if linger time has elapsed
+				if (t - arrivalTime[agentId]) >= lingerDuration[agentId] then
+					-- Done lingering — pick a new random wander target
+					arrivalTime[agentId] = nil
+					lingerDuration[agentId] = nil
+					wanderTargets[agentId] = Vector3.new(
+						math.clamp(currentPos.X + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE),
+						GROUND_Y,
+						math.clamp(currentPos.Z + math.random(-20, 20), -SPAWN_RANGE, SPAWN_RANGE)
+					)
+				end
 			else
+				-- Moving toward target
 				isMoving[agentId] = true
-				local newPos = currentPos:Lerp(target, MOVE_SPEED)
+				arrivalTime[agentId] = nil -- reset if we start moving again
+
+				-- Check for obstacles and steer around them
+				local desiredFacing = diff.Unit
+				local moveDir = avoidObstacles(currentPos, desiredFacing)
+
+				-- Smooth turn: lerp facing direction so NPC doesn't snap-rotate
+				local curFacing = agentFacing[agentId]
+				agentFacing[agentId] = (curFacing + (moveDir - curFacing) * math.min(1, dt * 5)).Unit
+
+				-- Move at consistent speed (studs per second)
+				local step = math.min(MOVE_SPEED * dt, dist) -- don't overshoot
+				local newPos = currentPos + moveDir * step
 				torso.Position = Vector3.new(newPos.X, GROUND_Y, newPos.Z)
 			end
 		end
 
 		local basePos = torso.Position
+		local facing = agentFacing[agentId] or Vector3.new(0, 0, -1)
 
 		if isMoving[agentId] then
-			-- Walking animation: alternating arm-leg swing
-			positionLimbs(model, basePos, {
+			-- Walking animation: alternating arm-leg swing in facing direction
+			positionLimbs(model, basePos, facing, {
 				la = math.sin(t * 8) * 0.6,
 				ra = -math.sin(t * 8) * 0.6,
 				ll = -math.sin(t * 8) * 0.5,
@@ -589,8 +700,8 @@ RunService.Heartbeat:Connect(function()
 				headBob = 0,
 			})
 		else
-			-- Idle animation: subtle head bob
-			positionLimbs(model, basePos, {
+			-- Idle animation: subtle head bob, body faces last direction
+			positionLimbs(model, basePos, facing, {
 				la = 0,
 				ra = 0,
 				ll = 0,
@@ -610,6 +721,9 @@ local function removeStaleAgents(activeIds: { [string]: boolean })
 			agentModels[agentId] = nil
 			wanderTargets[agentId] = nil
 			isMoving[agentId] = nil
+			agentFacing[agentId] = nil
+			arrivalTime[agentId] = nil
+			lingerDuration[agentId] = nil
 			lastBubbleTime[agentId] = nil
 			agentActions[agentId] = nil
 		end
@@ -655,6 +769,9 @@ while true do
 					agentModels[agentId] = nil
 					wanderTargets[agentId] = nil
 					isMoving[agentId] = nil
+					agentFacing[agentId] = nil
+					arrivalTime[agentId] = nil
+					lingerDuration[agentId] = nil
 				end
 				continue
 			end
