@@ -101,6 +101,95 @@ local lingerDuration: { [string]: number } = {}
 -- Track last action bubble time per agent
 local lastBubbleTime: { [string]: number } = {}
 
+-- Resource cooldown tracking: Part -> respawn time
+local resourceCooldowns: { [Part]: number } = {}
+local RESOURCE_RESPAWN_TIME = 30 -- seconds before a gathered resource reappears
+
+-- Consume a resource node visually (shrink + hide, then respawn after cooldown)
+local function consumeResource(part: Part)
+	if resourceCooldowns[part] then return end -- already consumed
+
+	-- Store original state
+	local origSize = part.Size
+	local origTransparency = part.Transparency
+	local origColor = part.Color
+
+	-- Mark as on cooldown
+	resourceCooldowns[part] = tick() + RESOURCE_RESPAWN_TIME
+
+	-- Collection burst effect
+	local burstPart = Instance.new("Part")
+	burstPart.Size = Vector3.new(1, 1, 1)
+	burstPart.Transparency = 1
+	burstPart.Anchored = true
+	burstPart.CanCollide = false
+	burstPart.Position = part.Position + Vector3.new(0, 2, 0)
+	burstPart.Parent = part.Parent
+
+	local burst = Instance.new("ParticleEmitter")
+	burst.Color = ColorSequence.new(origColor)
+	burst.Rate = 80
+	burst.Lifetime = NumberRange.new(0.3, 0.6)
+	burst.Speed = NumberRange.new(4, 10)
+	burst.SpreadAngle = Vector2.new(180, 180)
+	burst.LightEmission = 1
+	burst.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.4),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	burst.Parent = burstPart
+
+	task.delay(0.3, function()
+		burst.Enabled = false
+	end)
+	task.delay(1.5, function()
+		if burstPart.Parent then burstPart:Destroy() end
+	end)
+
+	-- Hide the resource
+	part.Transparency = 1
+	local pointLight = part:FindFirstChildOfClass("PointLight")
+	if pointLight then pointLight.Enabled = false end
+	local emitter = part:FindFirstChildOfClass("ParticleEmitter")
+	if emitter then emitter.Enabled = false end
+	local billboard = part:FindFirstChildOfClass("BillboardGui")
+	if billboard then billboard.Enabled = false end
+
+	-- Respawn after cooldown
+	task.delay(RESOURCE_RESPAWN_TIME, function()
+		part.Transparency = origTransparency
+		part.Size = origSize
+		if pointLight then pointLight.Enabled = true end
+		if emitter then emitter.Enabled = true end
+		if billboard then billboard.Enabled = true end
+		resourceCooldowns[part] = nil
+	end)
+end
+
+-- Find the nearest visible (not on cooldown) resource Part of a given type
+local function findNearestResourcePart(origin: Vector3, resName: string): Part?
+	local cityWorld = workspace:FindFirstChild("CityWorld")
+	if not cityWorld then return nil end
+	local resFolder = cityWorld:FindFirstChild("ResourceSpawns")
+	if not resFolder then return nil end
+
+	local best: Part? = nil
+	local bestDist = math.huge
+	for _, child in resFolder:GetChildren() do
+		if child:IsA("Part") and not resourceCooldowns[child] then
+			local lowerName = string.lower(child.Name)
+			if string.find(lowerName, string.lower(resName)) then
+				local d = (origin - child.Position).Magnitude
+				if d < bestDist then
+					best = child
+					bestDist = d
+				end
+			end
+		end
+	end
+	return best
+end
+
 -- Store current actions per agent from backend
 local agentActions: { [string]: any } = {}
 
@@ -223,12 +312,12 @@ local function getActionTarget(agentId: string, currentPos: Vector3): Vector3?
 
 	-- Backend sends: "gather", "trade", "change_strategy", "trigger_event", "idle"
 	if action == "gather" then
-		-- Use targetResourceType to determine which resource to walk toward
+		-- Use targetResourceType to determine which resource to walk toward (skip consumed ones)
 		local resType = actionData.targetResourceType
 		local resName = RESOURCE_NAMES_BY_INDEX[resType] or "wood"
-		local positions = resourcePositions[resName]
-		if positions and #positions > 0 then
-			return findNearest(currentPos, positions)
+		local resPart = findNearestResourcePart(currentPos, resName)
+		if resPart then
+			return Vector3.new(resPart.Position.X, GROUND_Y, resPart.Position.Z)
 		end
 		return nil
 	elseif action == "trade" then
@@ -652,6 +741,16 @@ RunService.Heartbeat:Connect(function(dt)
 					local actionData = agentActions[agentId]
 					local hasAction = actionData and actionData.currentAction and actionData.currentAction ~= "idle"
 					lingerDuration[agentId] = if hasAction then (4 + math.random() * 6) else (2 + math.random() * 3)
+
+					-- If gathering, consume the nearest resource node
+					if actionData and actionData.currentAction == "gather" then
+						local resType = actionData.targetResourceType
+						local resName = RESOURCE_NAMES_BY_INDEX[resType] or "wood"
+						local resPart = findNearestResourcePart(currentPos, resName)
+						if resPart and (currentPos - resPart.Position).Magnitude < 8 then
+							consumeResource(resPart)
+						end
+					end
 				end
 
 				isMoving[agentId] = false

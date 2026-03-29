@@ -379,13 +379,31 @@ local resourceTypes = {
 	{ name = "Food",   color = Color3.fromRGB(60, 220, 80),   glowColor = Color3.fromRGB(100, 255, 130) },
 }
 
+-- Find a position that doesn't overlap any building
+local function findClearResourcePosition(): Vector3
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Include
+	overlapParams.FilterDescendantsInstances = { buildingsFolder }
+
+	for _ = 1, 20 do -- try up to 20 times
+		local candidate = Vector3.new(math.random(-130, 130), 2.5, math.random(-130, 130))
+		-- Check a 6×6×6 box around the candidate (slightly larger than the 4×4×4 resource)
+		local hits = workspace:GetPartBoundsInBox(CFrame.new(candidate), Vector3.new(6, 10, 6), overlapParams)
+		if #hits == 0 then
+			return candidate
+		end
+	end
+	-- Fallback: place at map edge where there are no buildings
+	return Vector3.new(math.random(-10, 10) + (if math.random() > 0.5 then 120 else -120), 2.5, math.random(-60, 60))
+end
+
 for _, resInfo in ipairs(resourceTypes) do
 	for i = 1, 3 do
 		local cube = Instance.new("Part")
 		cube.Name = resInfo.name .. "_Spawn_" .. i
 		cube.Shape = Enum.PartType.Block
 		cube.Size = Vector3.new(4, 4, 4)
-		cube.Position = Vector3.new(math.random(-140, 140), 2.5, math.random(-140, 140))
+		cube.Position = findClearResourcePosition()
 		cube.Anchored = true
 		cube.CanCollide = false
 		cube.Color = resInfo.color

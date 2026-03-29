@@ -63,18 +63,19 @@ export class AiReasoningService {
 
     try {
       const systemPrompt =
-        'You are an AI agent playing a blockchain strategy game called Neon Nexus. ' +
-        'You manage resources (wood, steel, energy, food) and compete on a leaderboard. ' +
-        'Your goal is to maximize your score. ' +
-        'Respond with a JSON object containing: ' +
-        'action (one of: gather, trade, change_strategy, trigger_event, idle), ' +
-        'details (action-specific parameters), ' +
-        'and reasoning (1-2 sentence explanation). ' +
-        'For gather: include resourceToGather (0=wood, 1=steel, 2=energy, 3=food). ' +
-        'For trade: include tradeAction ("create_offer" or "accept_offer"), tradeResourceType (0-3), tradeQuantity, tradePricePerUnit, and optionally tradeOfferId for accept_offer. ' +
-        'For change_strategy: include newStrategy (0=Conservative, 1=Balanced, 2=Aggressive). ' +
-        'For trigger_event: include eventType (0-3). ' +
-        'For idle: no details needed.';
+        'You are an AI agent in Neon Nexus, a blockchain strategy game. ' +
+        'You manage resources (wood=0, steel=1, energy=2, food=3) and compete on a leaderboard.\n\n' +
+        'Respond with JSON: { "action", "details", "reasoning" }\n' +
+        'Actions: gather, trade, change_strategy, trigger_event, idle\n' +
+        'Details by action:\n' +
+        '- gather: { "resourceToGather": 0-3 }\n' +
+        '- trade: { "tradeAction": "create_offer"|"accept_offer", "tradeResourceType": 0-3, "tradeQuantity": N, "tradePricePerUnit": N, "tradeOfferId": N (accept only) }\n' +
+        '- change_strategy: { "newStrategy": 0=Conservative|1=Balanced|2=Aggressive }\n' +
+        '- trigger_event: { "eventType": 0-3 }\n' +
+        '- idle: {}\n\n' +
+        'CRITICAL: "reasoning" must be under 60 characters. Write like a game NPC status line. ' +
+        'Examples: "Low on steel, mining more", "Selling surplus wood", "Switching to aggressive", "Markets quiet, holding".\n' +
+        'Do NOT explain your logic. Just state what you are doing in a few words.';
 
       const userPrompt =
         `Agent Status:\n` +
@@ -108,7 +109,7 @@ export class AiReasoningService {
         ],
         response_format: { type: 'json_object' },
         temperature: 0.7,
-        max_tokens: 300,
+        max_tokens: 150,
       });
 
       const content = response.choices?.[0]?.message?.content;
@@ -124,10 +125,16 @@ export class AiReasoningService {
         return this.buildFallbackDecision(context);
       }
 
+      // Hard cap reasoning to 60 chars — LLMs sometimes ignore length instructions
+      let reasoning: string = parsed.reasoning || 'AI decision';
+      if (reasoning.length > 60) {
+        reasoning = reasoning.substring(0, 57) + '...';
+      }
+
       return {
         action: parsed.action,
         details: parsed.details || {},
-        reasoning: parsed.reasoning || 'AI decision',
+        reasoning,
       };
     } catch (error) {
       this.logger.warn(`AI decision failed: ${error.message}, using fallback`);
@@ -146,7 +153,7 @@ export class AiReasoningService {
       return {
         action: 'gather',
         details: { resourceToGather: lowestIndex },
-        reasoning: `${RESOURCE_NAMES[lowestIndex]} is critically low (${minResource}), gathering more`,
+        reasoning: `Low on ${RESOURCE_NAMES[lowestIndex]}, gathering more`,
       };
     }
 
@@ -162,7 +169,7 @@ export class AiReasoningService {
             tradeQuantity: sellAmount,
             tradePricePerUnit: 1,
           },
-          reasoning: `Surplus ${RESOURCE_NAMES[i]} detected (${resourceValues[i]} > 200), listing ${sellAmount} for sale`,
+          reasoning: `Selling surplus ${RESOURCE_NAMES[i]}`,
         };
       }
     }
@@ -171,7 +178,7 @@ export class AiReasoningService {
     return {
       action: 'idle',
       details: {},
-      reasoning: 'Resources are balanced, no immediate action needed',
+      reasoning: 'Resources balanced, holding',
     };
   }
 }
