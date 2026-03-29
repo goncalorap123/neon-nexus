@@ -3,44 +3,47 @@ local Lighting = game:GetService("Lighting")
 print("[WorldBuilder] Generating cyberpunk city world...")
 
 -- ============================================================
--- Ambient Lighting Setup
+-- Ambient Lighting Setup (brighter base, vivid neon)
 -- ============================================================
 
 Lighting.ClockTime = 21 -- Nighttime
-Lighting.Brightness = 0.3
-Lighting.OutdoorAmbient = Color3.fromRGB(20, 10, 40)
-Lighting.Ambient = Color3.fromRGB(30, 15, 50)
-Lighting.FogColor = Color3.fromRGB(10, 5, 25)
-Lighting.FogStart = 100
-Lighting.FogEnd = 600
+Lighting.Brightness = 1.5
+Lighting.OutdoorAmbient = Color3.fromRGB(60, 40, 90)
+Lighting.Ambient = Color3.fromRGB(80, 50, 120)
+Lighting.FogColor = Color3.fromRGB(20, 10, 40)
+Lighting.FogStart = 200
+Lighting.FogEnd = 800
+Lighting.GlobalShadows = true
+Lighting.EnvironmentDiffuseScale = 1
+Lighting.EnvironmentSpecularScale = 1
 
--- Atmosphere for cyberpunk haze
+-- Atmosphere — lighter haze so you can actually see
 local atmosphere = Instance.new("Atmosphere")
-atmosphere.Density = 0.35
-atmosphere.Offset = 0.2
-atmosphere.Color = Color3.fromRGB(40, 20, 60)
-atmosphere.Decay = Color3.fromRGB(20, 10, 40)
-atmosphere.Glare = 0.1
-atmosphere.Haze = 3
+atmosphere.Density = 0.2
+atmosphere.Offset = 0.3
+atmosphere.Color = Color3.fromRGB(80, 40, 120)
+atmosphere.Decay = Color3.fromRGB(50, 20, 80)
+atmosphere.Glare = 0.15
+atmosphere.Haze = 1.5
 atmosphere.Parent = Lighting
 
--- ColorCorrection for neon tint
+-- ColorCorrection — brighter, more saturated
 local colorCorrection = Instance.new("ColorCorrectionEffect")
-colorCorrection.Brightness = 0.02
-colorCorrection.Contrast = 0.15
-colorCorrection.Saturation = 0.2
-colorCorrection.TintColor = Color3.fromRGB(220, 200, 255)
+colorCorrection.Brightness = 0.08
+colorCorrection.Contrast = 0.1
+colorCorrection.Saturation = 0.35
+colorCorrection.TintColor = Color3.fromRGB(230, 210, 255)
 colorCorrection.Parent = Lighting
 
--- Bloom for neon glow
+-- Bloom — stronger glow for neon
 local bloom = Instance.new("BloomEffect")
-bloom.Intensity = 0.4
-bloom.Size = 30
-bloom.Threshold = 1.2
+bloom.Intensity = 0.8
+bloom.Size = 40
+bloom.Threshold = 0.8
 bloom.Parent = Lighting
 
 -- ============================================================
--- Ground Plane
+-- Ground Plane — faint neon grid look
 -- ============================================================
 
 local worldFolder = Instance.new("Folder")
@@ -52,18 +55,55 @@ ground.Name = "Ground"
 ground.Size = Vector3.new(400, 1, 400)
 ground.Position = Vector3.new(0, -0.5, 0)
 ground.Anchored = true
-ground.Color = Color3.fromRGB(30, 30, 35)
+ground.Color = Color3.fromRGB(18, 18, 25)
 ground.Material = Enum.Material.SmoothPlastic
 ground.TopSurface = Enum.SurfaceType.Smooth
 ground.BottomSurface = Enum.SurfaceType.Smooth
 ground.Parent = worldFolder
 
--- Subtle ground light
+-- Big ambient light under the city
 local groundLight = Instance.new("PointLight")
-groundLight.Color = Color3.fromRGB(0, 100, 150)
-groundLight.Brightness = 0.2
-groundLight.Range = 60
+groundLight.Color = Color3.fromRGB(0, 180, 255)
+groundLight.Brightness = 2
+groundLight.Range = 200
 groundLight.Parent = ground
+
+-- ============================================================
+-- Neon Grid Lines on the Ground
+-- ============================================================
+
+local gridFolder = Instance.new("Folder")
+gridFolder.Name = "NeonGrid"
+gridFolder.Parent = worldFolder
+
+local gridSpacing = 20
+local gridRange = 180
+
+for i = -gridRange, gridRange, gridSpacing do
+	-- X-axis lines
+	local lineX = Instance.new("Part")
+	lineX.Name = "GridX_" .. i
+	lineX.Size = Vector3.new(gridRange * 2, 0.05, 0.15)
+	lineX.Position = Vector3.new(0, 0.03, i)
+	lineX.Anchored = true
+	lineX.CanCollide = false
+	lineX.Color = Color3.fromRGB(0, 120, 180)
+	lineX.Material = Enum.Material.Neon
+	lineX.Transparency = 0.4
+	lineX.Parent = gridFolder
+
+	-- Z-axis lines
+	local lineZ = Instance.new("Part")
+	lineZ.Name = "GridZ_" .. i
+	lineZ.Size = Vector3.new(0.15, 0.05, gridRange * 2)
+	lineZ.Position = Vector3.new(i, 0.03, 0)
+	lineZ.Anchored = true
+	lineZ.CanCollide = false
+	lineZ.Color = Color3.fromRGB(0, 120, 180)
+	lineZ.Material = Enum.Material.Neon
+	lineZ.Transparency = 0.4
+	lineZ.Parent = gridFolder
+end
 
 -- ============================================================
 -- Building Grid
@@ -73,28 +113,28 @@ local buildingsFolder = Instance.new("Folder")
 buildingsFolder.Name = "Buildings"
 buildingsFolder.Parent = worldFolder
 
--- Neon-themed building palette
+-- Neon-themed building palette (slightly lighter so they're visible)
 local buildingColors = {
-	Color3.fromRGB(15, 20, 50),   -- dark blue
-	Color3.fromRGB(25, 15, 45),   -- dark purple
-	Color3.fromRGB(10, 30, 40),   -- dark teal
-	Color3.fromRGB(20, 10, 35),   -- deep indigo
-	Color3.fromRGB(18, 25, 38),   -- slate blue
+	Color3.fromRGB(25, 30, 60),
+	Color3.fromRGB(35, 20, 55),
+	Color3.fromRGB(20, 40, 50),
+	Color3.fromRGB(30, 20, 50),
+	Color3.fromRGB(28, 35, 50),
 }
 
 -- Neon accent colors for building lights
 local neonAccents = {
-	Color3.fromRGB(0, 200, 255),   -- cyan
-	Color3.fromRGB(255, 0, 200),   -- magenta
-	Color3.fromRGB(100, 0, 255),   -- purple
+	Color3.fromRGB(0, 220, 255),   -- cyan
+	Color3.fromRGB(255, 0, 220),   -- magenta/pink
+	Color3.fromRGB(130, 0, 255),   -- purple
 	Color3.fromRGB(0, 255, 150),   -- neon green
-	Color3.fromRGB(255, 100, 0),   -- orange
+	Color3.fromRGB(255, 120, 0),   -- orange
+	Color3.fromRGB(255, 255, 0),   -- yellow
 }
 
 -- 4x4 grid of building plots
--- Grid spans from -150 to 150, with gaps for streets
 local GRID_SIZE = 4
-local PLOT_SPACING = 70 -- distance between plot centers
+local PLOT_SPACING = 70
 local GRID_OFFSET = -((GRID_SIZE - 1) * PLOT_SPACING) / 2
 
 for row = 0, GRID_SIZE - 1 do
@@ -102,7 +142,6 @@ for row = 0, GRID_SIZE - 1 do
 		local centerX = GRID_OFFSET + col * PLOT_SPACING
 		local centerZ = GRID_OFFSET + row * PLOT_SPACING
 
-		-- Each plot has 1-3 building segments for variety
 		local numBuildings = math.random(1, 3)
 
 		for b = 1, numBuildings do
@@ -116,11 +155,7 @@ for row = 0, GRID_SIZE - 1 do
 			local building = Instance.new("Part")
 			building.Name = string.format("Building_R%d_C%d_%d", row, col, b)
 			building.Size = Vector3.new(width, height, depth)
-			building.Position = Vector3.new(
-				centerX + offsetX,
-				height / 2,
-				centerZ + offsetZ
-			)
+			building.Position = Vector3.new(centerX + offsetX, height / 2, centerZ + offsetZ)
 			building.Anchored = true
 			building.CanCollide = true
 			building.Color = buildingColors[math.random(1, #buildingColors)]
@@ -129,99 +164,206 @@ for row = 0, GRID_SIZE - 1 do
 			building.BottomSurface = Enum.SurfaceType.Smooth
 			building.Parent = buildingsFolder
 
-			-- Neon accent light on each building
 			local accentColor = neonAccents[math.random(1, #neonAccents)]
 
+			-- Bright point light on each building
 			local light = Instance.new("PointLight")
 			light.Color = accentColor
-			light.Brightness = 1.2
-			light.Range = math.random(12, 25)
+			light.Brightness = 3
+			light.Range = math.random(25, 45)
 			light.Parent = building
 
-			-- Add a surface light on a random face for glow effect
+			-- Neon strip on front face
+			local neonStrip = Instance.new("Part")
+			neonStrip.Name = "NeonStrip_Front"
+			neonStrip.Size = Vector3.new(width * 0.8, 0.3, 0.1)
+			neonStrip.Position = Vector3.new(
+				centerX + offsetX,
+				height * 0.7,
+				centerZ + offsetZ - depth / 2 - 0.05
+			)
+			neonStrip.Anchored = true
+			neonStrip.CanCollide = false
+			neonStrip.Color = accentColor
+			neonStrip.Material = Enum.Material.Neon
+			neonStrip.Parent = buildingsFolder
+
+			-- Neon strip on right face
+			local neonStripR = Instance.new("Part")
+			neonStripR.Name = "NeonStrip_Right"
+			neonStripR.Size = Vector3.new(0.1, 0.3, depth * 0.8)
+			neonStripR.Position = Vector3.new(
+				centerX + offsetX + width / 2 + 0.05,
+				height * 0.7,
+				centerZ + offsetZ
+			)
+			neonStripR.Anchored = true
+			neonStripR.CanCollide = false
+			neonStripR.Color = neonAccents[math.random(1, #neonAccents)]
+			neonStripR.Material = Enum.Material.Neon
+			neonStripR.Parent = buildingsFolder
+
+			-- Surface lights on multiple faces — much brighter
 			local surfaceLight = Instance.new("SurfaceLight")
 			surfaceLight.Color = accentColor
-			surfaceLight.Brightness = 0.6
-			surfaceLight.Range = 15
+			surfaceLight.Brightness = 2
+			surfaceLight.Range = 30
 			surfaceLight.Face = Enum.NormalId.Front
 			surfaceLight.Parent = building
 
-			-- Occasional second surface light on another face
-			if math.random() > 0.5 then
-				local surfaceLight2 = Instance.new("SurfaceLight")
-				surfaceLight2.Color = neonAccents[math.random(1, #neonAccents)]
-				surfaceLight2.Brightness = 0.4
-				surfaceLight2.Range = 10
-				surfaceLight2.Face = Enum.NormalId.Right
-				surfaceLight2.Parent = building
+			local surfaceLight2 = Instance.new("SurfaceLight")
+			surfaceLight2.Color = neonAccents[math.random(1, #neonAccents)]
+			surfaceLight2.Brightness = 1.5
+			surfaceLight2.Range = 25
+			surfaceLight2.Face = Enum.NormalId.Right
+			surfaceLight2.Parent = building
+
+			local surfaceLight3 = Instance.new("SurfaceLight")
+			surfaceLight3.Color = neonAccents[math.random(1, #neonAccents)]
+			surfaceLight3.Brightness = 1.5
+			surfaceLight3.Range = 25
+			surfaceLight3.Face = Enum.NormalId.Left
+			surfaceLight3.Parent = building
+
+			-- Rooftop beacon light on taller buildings
+			if height > 25 then
+				local beacon = Instance.new("Part")
+				beacon.Name = "Beacon"
+				beacon.Shape = Enum.PartType.Ball
+				beacon.Size = Vector3.new(1.5, 1.5, 1.5)
+				beacon.Position = Vector3.new(centerX + offsetX, height + 1, centerZ + offsetZ)
+				beacon.Anchored = true
+				beacon.CanCollide = false
+				beacon.Color = accentColor
+				beacon.Material = Enum.Material.Neon
+				beacon.Parent = buildingsFolder
+
+				local beaconLight = Instance.new("PointLight")
+				beaconLight.Color = accentColor
+				beaconLight.Brightness = 5
+				beaconLight.Range = 50
+				beaconLight.Parent = beacon
 			end
 		end
 	end
 end
 
 -- ============================================================
--- Street Markings (thin glowing strips between building clusters)
+-- Neon Street Strips
 -- ============================================================
 
 local streetsFolder = Instance.new("Folder")
 streetsFolder.Name = "Streets"
 streetsFolder.Parent = worldFolder
 
--- Horizontal street strips
-for row = 0, GRID_SIZE - 1 do
-	local z = GRID_OFFSET + row * PLOT_SPACING
+-- Horizontal streets
+for row = 0, GRID_SIZE do
+	local z = GRID_OFFSET + row * PLOT_SPACING - PLOT_SPACING / 2
 
 	local streetH = Instance.new("Part")
 	streetH.Name = "Street_H_" .. row
-	streetH.Size = Vector3.new(GRID_SIZE * PLOT_SPACING + 40, 0.1, 6)
-	streetH.Position = Vector3.new(0, 0.05, z - PLOT_SPACING / 2 + 2)
+	streetH.Size = Vector3.new(GRID_SIZE * PLOT_SPACING + 60, 0.1, 8)
+	streetH.Position = Vector3.new(0, 0.05, z)
 	streetH.Anchored = true
 	streetH.CanCollide = false
-	streetH.Color = Color3.fromRGB(40, 40, 50)
-	streetH.Material = Enum.Material.Neon
-	streetH.Transparency = 0.7
+	streetH.Color = Color3.fromRGB(25, 25, 35)
+	streetH.Material = Enum.Material.SmoothPlastic
 	streetH.Parent = streetsFolder
 
-	-- Center line glow
+	-- Bright center neon line
 	local centerLine = Instance.new("Part")
 	centerLine.Name = "CenterLine_H_" .. row
-	centerLine.Size = Vector3.new(GRID_SIZE * PLOT_SPACING + 40, 0.12, 0.3)
-	centerLine.Position = Vector3.new(0, 0.06, z - PLOT_SPACING / 2 + 2)
+	centerLine.Size = Vector3.new(GRID_SIZE * PLOT_SPACING + 60, 0.12, 0.4)
+	centerLine.Position = Vector3.new(0, 0.07, z)
 	centerLine.Anchored = true
 	centerLine.CanCollide = false
-	centerLine.Color = Color3.fromRGB(0, 150, 200)
+	centerLine.Color = Color3.fromRGB(0, 200, 255)
 	centerLine.Material = Enum.Material.Neon
 	centerLine.Parent = streetsFolder
+
+	-- Edge neon lines
+	for _, side in ipairs({ -3.5, 3.5 }) do
+		local edgeLine = Instance.new("Part")
+		edgeLine.Name = "Edge_H_" .. row .. "_" .. tostring(side)
+		edgeLine.Size = Vector3.new(GRID_SIZE * PLOT_SPACING + 60, 0.12, 0.2)
+		edgeLine.Position = Vector3.new(0, 0.07, z + side)
+		edgeLine.Anchored = true
+		edgeLine.CanCollide = false
+		edgeLine.Color = Color3.fromRGB(255, 0, 200)
+		edgeLine.Material = Enum.Material.Neon
+		edgeLine.Parent = streetsFolder
+	end
+
+	-- Street lamp posts along the road
+	for lampX = -140, 140, 35 do
+		local pole = Instance.new("Part")
+		pole.Name = "Lamppost"
+		pole.Size = Vector3.new(0.4, 12, 0.4)
+		pole.Position = Vector3.new(lampX, 6, z + 5)
+		pole.Anchored = true
+		pole.CanCollide = true
+		pole.Color = Color3.fromRGB(50, 50, 60)
+		pole.Material = Enum.Material.Metal
+		pole.Parent = streetsFolder
+
+		local lampHead = Instance.new("Part")
+		lampHead.Name = "LampHead"
+		lampHead.Shape = Enum.PartType.Ball
+		lampHead.Size = Vector3.new(2, 2, 2)
+		lampHead.Position = Vector3.new(lampX, 12.5, z + 5)
+		lampHead.Anchored = true
+		lampHead.CanCollide = false
+		lampHead.Color = neonAccents[math.random(1, #neonAccents)]
+		lampHead.Material = Enum.Material.Neon
+		lampHead.Parent = streetsFolder
+
+		local lampLight = Instance.new("PointLight")
+		lampLight.Color = lampHead.Color
+		lampLight.Brightness = 4
+		lampLight.Range = 40
+		lampLight.Parent = lampHead
+	end
 end
 
--- Vertical street strips
-for col = 0, GRID_SIZE - 1 do
-	local x = GRID_OFFSET + col * PLOT_SPACING
+-- Vertical streets
+for col = 0, GRID_SIZE do
+	local x = GRID_OFFSET + col * PLOT_SPACING - PLOT_SPACING / 2
 
 	local streetV = Instance.new("Part")
 	streetV.Name = "Street_V_" .. col
-	streetV.Size = Vector3.new(6, 0.1, GRID_SIZE * PLOT_SPACING + 40)
-	streetV.Position = Vector3.new(x - PLOT_SPACING / 2 + 2, 0.05, 0)
+	streetV.Size = Vector3.new(8, 0.1, GRID_SIZE * PLOT_SPACING + 60)
+	streetV.Position = Vector3.new(x, 0.05, 0)
 	streetV.Anchored = true
 	streetV.CanCollide = false
-	streetV.Color = Color3.fromRGB(40, 40, 50)
-	streetV.Material = Enum.Material.Neon
-	streetV.Transparency = 0.7
+	streetV.Color = Color3.fromRGB(25, 25, 35)
+	streetV.Material = Enum.Material.SmoothPlastic
 	streetV.Parent = streetsFolder
 
 	local centerLine = Instance.new("Part")
 	centerLine.Name = "CenterLine_V_" .. col
-	centerLine.Size = Vector3.new(0.3, 0.12, GRID_SIZE * PLOT_SPACING + 40)
-	centerLine.Position = Vector3.new(x - PLOT_SPACING / 2 + 2, 0.06, 0)
+	centerLine.Size = Vector3.new(0.4, 0.12, GRID_SIZE * PLOT_SPACING + 60)
+	centerLine.Position = Vector3.new(x, 0.07, 0)
 	centerLine.Anchored = true
 	centerLine.CanCollide = false
-	centerLine.Color = Color3.fromRGB(0, 150, 200)
+	centerLine.Color = Color3.fromRGB(0, 200, 255)
 	centerLine.Material = Enum.Material.Neon
 	centerLine.Parent = streetsFolder
+
+	for _, side in ipairs({ -3.5, 3.5 }) do
+		local edgeLine = Instance.new("Part")
+		edgeLine.Name = "Edge_V_" .. col .. "_" .. tostring(side)
+		edgeLine.Size = Vector3.new(0.2, 0.12, GRID_SIZE * PLOT_SPACING + 60)
+		edgeLine.Position = Vector3.new(x + side, 0.07, 0)
+		edgeLine.Anchored = true
+		edgeLine.CanCollide = false
+		edgeLine.Color = Color3.fromRGB(255, 0, 200)
+		edgeLine.Material = Enum.Material.Neon
+		edgeLine.Parent = streetsFolder
+	end
 end
 
 -- ============================================================
--- Resource Spawn Points
+-- Resource Spawn Points (larger, brighter)
 -- ============================================================
 
 local resourcesFolder = Instance.new("Folder")
@@ -229,41 +371,36 @@ resourcesFolder.Name = "ResourceSpawns"
 resourcesFolder.Parent = worldFolder
 
 local resourceTypes = {
-	{ name = "Wood",   color = Color3.fromRGB(120, 70, 30),  glowColor = Color3.fromRGB(180, 120, 60)  },
-	{ name = "Steel",  color = Color3.fromRGB(160, 165, 170), glowColor = Color3.fromRGB(200, 210, 220) },
-	{ name = "Energy", color = Color3.fromRGB(255, 220, 40),  glowColor = Color3.fromRGB(255, 240, 100) },
-	{ name = "Food",   color = Color3.fromRGB(50, 180, 60),   glowColor = Color3.fromRGB(80, 255, 100)  },
+	{ name = "Wood",   color = Color3.fromRGB(180, 100, 40),  glowColor = Color3.fromRGB(255, 160, 60)  },
+	{ name = "Steel",  color = Color3.fromRGB(180, 190, 200), glowColor = Color3.fromRGB(220, 230, 255) },
+	{ name = "Energy", color = Color3.fromRGB(255, 240, 40),  glowColor = Color3.fromRGB(255, 255, 120) },
+	{ name = "Food",   color = Color3.fromRGB(60, 220, 80),   glowColor = Color3.fromRGB(100, 255, 130) },
 }
 
--- Place resource cubes around the map (3 of each type)
 for _, resInfo in ipairs(resourceTypes) do
 	for i = 1, 3 do
 		local cube = Instance.new("Part")
 		cube.Name = resInfo.name .. "_Spawn_" .. i
 		cube.Shape = Enum.PartType.Block
-		cube.Size = Vector3.new(3, 3, 3)
-		cube.Position = Vector3.new(
-			math.random(-140, 140),
-			1.5,
-			math.random(-140, 140)
-		)
+		cube.Size = Vector3.new(4, 4, 4)
+		cube.Position = Vector3.new(math.random(-140, 140), 2.5, math.random(-140, 140))
 		cube.Anchored = true
 		cube.CanCollide = false
 		cube.Color = resInfo.color
 		cube.Material = Enum.Material.Neon
 		cube.Parent = resourcesFolder
 
-		-- Floating rotation effect using a slow spin
+		-- Much brighter glow
 		local glow = Instance.new("PointLight")
 		glow.Color = resInfo.glowColor
-		glow.Brightness = 1.5
-		glow.Range = 10
+		glow.Brightness = 4
+		glow.Range = 25
 		glow.Parent = cube
 
 		-- BillboardGui label
 		local billboard = Instance.new("BillboardGui")
-		billboard.Size = UDim2.new(0, 80, 0, 25)
-		billboard.StudsOffset = Vector3.new(0, 3, 0)
+		billboard.Size = UDim2.new(0, 100, 0, 30)
+		billboard.StudsOffset = Vector3.new(0, 4, 0)
 		billboard.AlwaysOnTop = true
 		billboard.Adornee = cube
 		billboard.Parent = cube
@@ -272,15 +409,53 @@ for _, resInfo in ipairs(resourceTypes) do
 		label.Size = UDim2.new(1, 0, 1, 0)
 		label.BackgroundTransparency = 1
 		label.TextColor3 = resInfo.glowColor
-		label.TextStrokeTransparency = 0.3
+		label.TextStrokeTransparency = 0
 		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-		label.TextSize = 14
+		label.TextSize = 16
 		label.Font = Enum.Font.GothamBold
 		label.Text = resInfo.name
 		label.Parent = billboard
 	end
 end
 
+-- ============================================================
+-- Corner Pillar Lights (big ambient neon pillars at map edges)
+-- ============================================================
+
+local pillarsFolder = Instance.new("Folder")
+pillarsFolder.Name = "NeonPillars"
+pillarsFolder.Parent = worldFolder
+
+local pillarPositions = {
+	Vector3.new(-180, 0, -180),
+	Vector3.new(180, 0, -180),
+	Vector3.new(-180, 0, 180),
+	Vector3.new(180, 0, 180),
+	Vector3.new(0, 0, -180),
+	Vector3.new(0, 0, 180),
+	Vector3.new(-180, 0, 0),
+	Vector3.new(180, 0, 0),
+}
+
+for idx, pos in ipairs(pillarPositions) do
+	local pillar = Instance.new("Part")
+	pillar.Name = "NeonPillar_" .. idx
+	pillar.Size = Vector3.new(2, 50, 2)
+	pillar.Position = Vector3.new(pos.X, 25, pos.Z)
+	pillar.Anchored = true
+	pillar.CanCollide = false
+	pillar.Color = neonAccents[(idx % #neonAccents) + 1]
+	pillar.Material = Enum.Material.Neon
+	pillar.Transparency = 0.2
+	pillar.Parent = pillarsFolder
+
+	local pillarLight = Instance.new("PointLight")
+	pillarLight.Color = pillar.Color
+	pillarLight.Brightness = 6
+	pillarLight.Range = 80
+	pillarLight.Parent = pillar
+end
+
 print("[WorldBuilder] City world generation complete!")
-print(string.format("[WorldBuilder] Generated %d building plots, %d resource spawns",
-	GRID_SIZE * GRID_SIZE, #resourceTypes * 3))
+print(string.format("[WorldBuilder] Generated %d building plots, %d resource spawns, %d neon pillars",
+	GRID_SIZE * GRID_SIZE, #resourceTypes * 3, #pillarPositions))
