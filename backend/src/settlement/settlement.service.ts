@@ -2,23 +2,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AgentService } from '../agent/agent.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
-import { PrivyService } from '../privy/privy.service';
-import { getEnvConfig } from '../config/env.config';
 
 // Yield rates per hour based on strategy (in token base units, e.g. 6 decimals)
-// Conservative: 0.5%, Balanced: 1%, Aggressive: 2% (annualized, divided by 8760 hours)
 const YIELD_RATES = [
-  50n,   // conservative: ~0.05 tokens/hour per 1000 deposited
-  100n,  // balanced: ~0.10 tokens/hour per 1000 deposited
-  200n,  // aggressive: ~0.20 tokens/hour per 1000 deposited
+  50n,   // conservative
+  100n,  // balanced
+  200n,  // aggressive
 ];
 
-// Resource distribution weights per strategy
-// [wood, steel, energy, food]
+// Resource distribution weights per strategy [wood, steel, energy, food]
 const RESOURCE_WEIGHTS: Record<number, number[]> = {
-  0: [30, 30, 20, 20], // conservative: balanced resources
-  1: [25, 35, 25, 15], // balanced: steel-heavy for upgrades
-  2: [15, 20, 45, 20], // aggressive: energy-heavy for trading
+  0: [30, 30, 20, 20],
+  1: [25, 35, 25, 15],
+  2: [15, 20, 45, 20],
 };
 
 @Injectable()
@@ -28,7 +24,6 @@ export class SettlementService {
   constructor(
     private readonly agentService: AgentService,
     private readonly blockchainService: BlockchainService,
-    private readonly privyService: PrivyService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -41,8 +36,6 @@ export class SettlementService {
       return;
     }
 
-    const config = getEnvConfig();
-
     for (const agent of agents) {
       try {
         const onChain = await this.blockchainService.getAgent(agent.address);
@@ -53,21 +46,17 @@ export class SettlementService {
 
         const strategyType = Number(onChain.strategyType);
         const yieldRate = YIELD_RATES[strategyType] ?? YIELD_RATES[1];
-
-        // Yield = deposit * rate / 1_000_000 (scaled)
         const yieldAmount = (deposit * yieldRate) / 1_000_000n;
         if (yieldAmount === 0n) continue;
 
-        // Distribute yield on-chain
+        // distributeYield is onlyOwner
         const yieldData = this.blockchainService.encodeDistributeYield(agent.address, yieldAmount);
-        await this.privyService.sendTransaction(
-          agent.address,
+        await this.blockchainService.ownerSendTransaction(
           this.blockchainService.getNeonNexusAddress(),
           yieldData,
-          config.FLOW_CHAIN_ID,
         );
 
-        this.logger.log(`Distributed ${yieldAmount} yield to agent ${agent.playerId} (${agent.address})`);
+        this.logger.log(`Distributed ${yieldAmount} yield to agent ${agent.playerId}`);
       } catch (error) {
         this.logger.error(`Failed to distribute yield to ${agent.playerId}: ${error.message}`);
       }
@@ -86,8 +75,6 @@ export class SettlementService {
       return;
     }
 
-    const config = getEnvConfig();
-
     for (const agent of agents) {
       try {
         const onChain = await this.blockchainService.getAgent(agent.address);
@@ -95,10 +82,8 @@ export class SettlementService {
 
         const strategyType = Number(onChain.strategyType);
         const yieldEarned = BigInt(onChain.yieldEarned);
-
         if (yieldEarned === 0n) continue;
 
-        // Convert yield into resources based on strategy weights
         const weights = RESOURCE_WEIGHTS[strategyType] ?? RESOURCE_WEIGHTS[1];
         const totalWeight = weights.reduce((a, b) => a + b, 0);
 
@@ -106,25 +91,22 @@ export class SettlementService {
           const resourceAmount = (yieldEarned * BigInt(weights[resourceType])) / BigInt(totalWeight * 100);
           if (resourceAmount === 0n) continue;
 
+          // mintResources is onlyOwner
           const mintData = this.blockchainService.encodeMintResources(
             agent.address,
             resourceType,
             resourceAmount,
           );
-
-          await this.privyService.sendTransaction(
-            agent.address,
+          await this.blockchainService.ownerSendTransaction(
             this.blockchainService.getAgentTradingAddress(),
             mintData,
-            config.FLOW_CHAIN_ID,
           );
         }
 
         this.logger.log(`Minted resources for agent ${agent.playerId} based on strategy ${strategyType}`);
 
-        // Aggressive agents auto-create trade offers with surplus resources
         if (strategyType === 2) {
-          await this.autoTrade(agent.address, config.FLOW_CHAIN_ID);
+          await this.autoTrade(agent.address);
         }
       } catch (error) {
         this.logger.error(`Failed to run decisions for ${agent.playerId}: ${error.message}`);
@@ -134,30 +116,20 @@ export class SettlementService {
     this.logger.log('Agent decision cycle complete');
   }
 
-  private async autoTrade(agentAddress: string, chainId: number) {
+  private async autoTrade(agentAddress: string) {
     try {
-      // Check if agent has excess energy (aggressive strategy's primary resource)
       const energyBalance = await this.blockchainService.getAgentResources(agentAddress, 2);
-      const threshold = 100n;
+      if (energyBalance <= 100n) return;
 
-      if (energyBalance > threshold) {
-        const sellAmount = energyBalance / 2n;
-        const data = this.blockchainService.encodeCreateOffer(
-          agentAddress,
-          2, // energy
-          sellAmount,
-          1n, // 1 token per unit
-        );
+      const sellAmount = energyBalance / 2n;
+      // createOffer is onlyOwner
+      const data = this.blockchainService.encodeCreateOffer(agentAddress, 2, sellAmount, 1n);
+      await this.blockchainService.ownerSendTransaction(
+        this.blockchainService.getAgentTradingAddress(),
+        data,
+      );
 
-        await this.privyService.sendTransaction(
-          agentAddress,
-          this.blockchainService.getAgentTradingAddress(),
-          data,
-          chainId,
-        );
-
-        this.logger.log(`Auto-trade: ${agentAddress} listed ${sellAmount} energy for sale`);
-      }
+      this.logger.log(`Auto-trade: ${agentAddress} listed ${sellAmount} energy for sale`);
     } catch (error) {
       this.logger.error(`Auto-trade failed for ${agentAddress}: ${error.message}`);
     }

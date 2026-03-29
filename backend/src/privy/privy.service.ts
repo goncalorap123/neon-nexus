@@ -24,13 +24,13 @@ export class PrivyService implements OnModuleInit {
   }
 
   async sendTransaction(
-    walletAddress: string,
+    walletId: string,
     to: string,
     data: string,
     chainId: number,
   ): Promise<{ hash: string }> {
     const result = await this.client.walletApi.ethereum.sendTransaction({
-      address: walletAddress,
+      walletId: walletId,
       chainType: 'ethereum',
       caip2: `eip155:${chainId}`,
       transaction: {

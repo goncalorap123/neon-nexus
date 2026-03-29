@@ -62,6 +62,15 @@ export class BlockchainService implements OnModuleInit {
     return this.provider;
   }
 
+  // Send a transaction as the contract owner (deploy wallet)
+  async ownerSendTransaction(to: string, data: string): Promise<{ hash: string }> {
+    const config = getEnvConfig();
+    const signer = new ethers.Wallet(config.DEPLOY_WALLET_KEY, this.provider);
+    const tx = await signer.sendTransaction({ to, data });
+    await tx.wait();
+    return { hash: tx.hash };
+  }
+
   // NeonNexus encode methods
   encodeRegisterAgent(player: string, agentWallet: string): string {
     return this.neonNexus.interface.encodeFunctionData('registerAgent', [player, agentWallet]);
@@ -103,11 +112,25 @@ export class BlockchainService implements OnModuleInit {
 
   // Read methods
   async getAgent(agentWallet: string): Promise<any> {
-    return this.neonNexus.getAgent(agentWallet);
+    const raw = await this.neonNexus.getAgent(agentWallet);
+    return {
+      wallet: raw.wallet,
+      deposit: raw.deposit.toString(),
+      yieldEarned: raw.yieldEarned.toString(),
+      lastHarvest: raw.lastHarvest.toString(),
+      strategyType: Number(raw.strategyType),
+      active: raw.active,
+    };
   }
 
   async getAgentResources(agent: string, resourceType: number): Promise<bigint> {
-    return this.agentTrading.agentResources(agent, resourceType);
+    const val = await this.agentTrading.agentResources(agent, resourceType);
+    return BigInt(val);
+  }
+
+  async getAgentResourcesAsString(agent: string, resourceType: number): Promise<string> {
+    const val = await this.agentTrading.agentResources(agent, resourceType);
+    return val.toString();
   }
 
   async getOffer(offerId: number): Promise<any> {
@@ -115,7 +138,8 @@ export class BlockchainService implements OnModuleInit {
   }
 
   async getNextOfferId(): Promise<bigint> {
-    return this.agentTrading.nextOfferId();
+    const val = await this.agentTrading.nextOfferId();
+    return BigInt(val);
   }
 
   getNeonNexusAddress(): string {

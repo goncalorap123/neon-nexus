@@ -4,8 +4,6 @@ import { Repository } from 'typeorm';
 import { TradeOfferEntity } from '../database/entities/trade-offer.entity';
 import { AgentService } from '../agent/agent.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
-import { PrivyService } from '../privy/privy.service';
-import { getEnvConfig } from '../config/env.config';
 
 @Injectable()
 export class TradingService {
@@ -16,7 +14,6 @@ export class TradingService {
     private readonly offerRepo: Repository<TradeOfferEntity>,
     private readonly agentService: AgentService,
     private readonly blockchainService: BlockchainService,
-    private readonly privyService: PrivyService,
   ) {}
 
   async getActiveOffers(): Promise<TradeOfferEntity[]> {
@@ -34,19 +31,16 @@ export class TradingService {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    const config = getEnvConfig();
+    // createOffer is onlyOwner
     const data = this.blockchainService.encodeCreateOffer(
       walletInfo.address,
       resourceType,
       BigInt(quantity),
       BigInt(pricePerUnit),
     );
-
-    const tx = await this.privyService.sendTransaction(
-      walletInfo.address,
+    const tx = await this.blockchainService.ownerSendTransaction(
       this.blockchainService.getAgentTradingAddress(),
       data,
-      config.FLOW_CHAIN_ID,
     );
 
     const nextId = Number(await this.blockchainService.getNextOfferId()) - 1;
@@ -63,7 +57,6 @@ export class TradingService {
     await this.offerRepo.save(offer);
 
     this.logger.log(`Offer created: ${playerId} selling ${quantity} of resource ${resourceType}`);
-
     return { offerId: offer.id, txHash: tx.hash };
   }
 
@@ -82,18 +75,15 @@ export class TradingService {
       throw new Error(`Offer ${offerId} not found or inactive`);
     }
 
-    const config = getEnvConfig();
+    // executeTrade is onlyOwner
     const data = this.blockchainService.encodeExecuteTrade(
       walletInfo.address,
       BigInt(offer.onChainOfferId),
       BigInt(quantity),
     );
-
-    const tx = await this.privyService.sendTransaction(
-      walletInfo.address,
+    const tx = await this.blockchainService.ownerSendTransaction(
       this.blockchainService.getAgentTradingAddress(),
       data,
-      config.FLOW_CHAIN_ID,
     );
 
     const remainingQty = BigInt(offer.quantity) - BigInt(quantity);
@@ -104,7 +94,6 @@ export class TradingService {
     await this.offerRepo.save(offer);
 
     this.logger.log(`Trade executed: ${buyerPlayerId} bought ${quantity} from offer ${offerId}`);
-
     return { txHash: tx.hash };
   }
 }

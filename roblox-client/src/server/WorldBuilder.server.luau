@@ -7,7 +7,7 @@ print("[WorldBuilder] Generating cyberpunk city world...")
 -- ============================================================
 
 Lighting.ClockTime = 21 -- Nighttime
-Lighting.Brightness = 1.5
+Lighting.Brightness = 0.75
 Lighting.OutdoorAmbient = Color3.fromRGB(60, 40, 90)
 Lighting.Ambient = Color3.fromRGB(80, 50, 120)
 Lighting.FogColor = Color3.fromRGB(20, 10, 40)
@@ -37,7 +37,7 @@ colorCorrection.Parent = Lighting
 
 -- Bloom — stronger glow for neon
 local bloom = Instance.new("BloomEffect")
-bloom.Intensity = 0.8
+bloom.Intensity = 0.4
 bloom.Size = 40
 bloom.Threshold = 0.8
 bloom.Parent = Lighting
@@ -64,7 +64,7 @@ ground.Parent = worldFolder
 -- Big ambient light under the city
 local groundLight = Instance.new("PointLight")
 groundLight.Color = Color3.fromRGB(0, 180, 255)
-groundLight.Brightness = 2
+groundLight.Brightness = 1
 groundLight.Range = 200
 groundLight.Parent = ground
 
@@ -169,7 +169,7 @@ for row = 0, GRID_SIZE - 1 do
 			-- Bright point light on each building
 			local light = Instance.new("PointLight")
 			light.Color = accentColor
-			light.Brightness = 3
+			light.Brightness = 1.5
 			light.Range = math.random(25, 45)
 			light.Parent = building
 
@@ -206,21 +206,21 @@ for row = 0, GRID_SIZE - 1 do
 			-- Surface lights on multiple faces — much brighter
 			local surfaceLight = Instance.new("SurfaceLight")
 			surfaceLight.Color = accentColor
-			surfaceLight.Brightness = 2
+			surfaceLight.Brightness = 1
 			surfaceLight.Range = 30
 			surfaceLight.Face = Enum.NormalId.Front
 			surfaceLight.Parent = building
 
 			local surfaceLight2 = Instance.new("SurfaceLight")
 			surfaceLight2.Color = neonAccents[math.random(1, #neonAccents)]
-			surfaceLight2.Brightness = 1.5
+			surfaceLight2.Brightness = 0.75
 			surfaceLight2.Range = 25
 			surfaceLight2.Face = Enum.NormalId.Right
 			surfaceLight2.Parent = building
 
 			local surfaceLight3 = Instance.new("SurfaceLight")
 			surfaceLight3.Color = neonAccents[math.random(1, #neonAccents)]
-			surfaceLight3.Brightness = 1.5
+			surfaceLight3.Brightness = 0.75
 			surfaceLight3.Range = 25
 			surfaceLight3.Face = Enum.NormalId.Left
 			surfaceLight3.Parent = building
@@ -240,7 +240,7 @@ for row = 0, GRID_SIZE - 1 do
 
 				local beaconLight = Instance.new("PointLight")
 				beaconLight.Color = accentColor
-				beaconLight.Brightness = 5
+				beaconLight.Brightness = 2.5
 				beaconLight.Range = 50
 				beaconLight.Parent = beacon
 			end
@@ -319,7 +319,7 @@ for row = 0, GRID_SIZE do
 
 		local lampLight = Instance.new("PointLight")
 		lampLight.Color = lampHead.Color
-		lampLight.Brightness = 4
+		lampLight.Brightness = 2
 		lampLight.Range = 40
 		lampLight.Parent = lampHead
 	end
@@ -393,7 +393,7 @@ for _, resInfo in ipairs(resourceTypes) do
 		-- Much brighter glow
 		local glow = Instance.new("PointLight")
 		glow.Color = resInfo.glowColor
-		glow.Brightness = 4
+		glow.Brightness = 2
 		glow.Range = 25
 		glow.Parent = cube
 
@@ -451,7 +451,7 @@ for idx, pos in ipairs(pillarPositions) do
 
 	local pillarLight = Instance.new("PointLight")
 	pillarLight.Color = pillar.Color
-	pillarLight.Brightness = 6
+	pillarLight.Brightness = 3
 	pillarLight.Range = 80
 	pillarLight.Parent = pillar
 end

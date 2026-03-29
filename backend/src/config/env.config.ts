@@ -1,7 +1,10 @@
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
+// Try multiple possible .env locations
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
 export interface EnvConfig {
   PRIVY_APP_ID: string;
@@ -13,6 +16,7 @@ export interface EnvConfig {
   RANDOM_EVENTS_ADDRESS: string;
   AGENT_TRADING_ADDRESS: string;
   DEPOSIT_TOKEN_ADDRESS: string;
+  DEPLOY_WALLET_KEY: string;
 }
 
 export function getEnvConfig(): EnvConfig {
@@ -26,5 +30,6 @@ export function getEnvConfig(): EnvConfig {
     RANDOM_EVENTS_ADDRESS: process.env.RANDOM_EVENTS_ADDRESS || '',
     AGENT_TRADING_ADDRESS: process.env.AGENT_TRADING_ADDRESS || '',
     DEPOSIT_TOKEN_ADDRESS: process.env.DEPOSIT_TOKEN_ADDRESS || '',
+    DEPLOY_WALLET_KEY: process.env.DEPLOY_WALLET_KEY || '',
   };
 }

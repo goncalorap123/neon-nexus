@@ -42,7 +42,7 @@ export class GameService {
     }
 
     return this.randomService.commitEvent(
-      walletInfo.address,
+      walletInfo.walletId,
       walletInfo.address,
       eventType,
     );
@@ -55,7 +55,7 @@ export class GameService {
     }
 
     return this.randomService.revealEvent(
-      walletInfo.address,
+      walletInfo.walletId,
       walletInfo.address,
     );
   }

@@ -23,13 +23,10 @@ export class AgentService {
 
     const wallet = await this.privyService.createWallet();
 
-    const config = getEnvConfig();
     const data = this.blockchainService.encodeRegisterAgent(wallet.address, wallet.address);
-    const tx = await this.privyService.sendTransaction(
-      wallet.address,
+    const tx = await this.blockchainService.ownerSendTransaction(
       this.blockchainService.getNeonNexusAddress(),
       data,
-      config.FLOW_CHAIN_ID,
     );
 
     const agent = this.agentRepo.create({
@@ -63,13 +60,10 @@ export class AgentService {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    const config = getEnvConfig();
     const data = this.blockchainService.encodeDeposit(agent.address, amount);
-    const tx = await this.privyService.sendTransaction(
-      agent.address,
+    const tx = await this.blockchainService.ownerSendTransaction(
       this.blockchainService.getNeonNexusAddress(),
       data,
-      config.FLOW_CHAIN_ID,
     );
 
     return { txHash: tx.hash };
@@ -81,13 +75,10 @@ export class AgentService {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    const config = getEnvConfig();
     const data = this.blockchainService.encodeSetStrategy(agent.address, strategy);
-    const tx = await this.privyService.sendTransaction(
-      agent.address,
+    const tx = await this.blockchainService.ownerSendTransaction(
       this.blockchainService.getNeonNexusAddress(),
       data,
-      config.FLOW_CHAIN_ID,
     );
 
     agent.strategyType = strategy;
