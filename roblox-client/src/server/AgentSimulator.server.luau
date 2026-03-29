@@ -32,6 +32,61 @@ local strategyNames = {
 -- Target positions for NPC wandering
 local wanderTargets: { [string]: Vector3 } = {}
 
+-- Track last action bubble time per agent
+local lastBubbleTime: { [string]: number } = {}
+local BUBBLE_INTERVAL = 30 -- seconds between action bubbles
+
+-- Action phrases by strategy
+local actionPhrases = {
+	[0] = { "Saving resources...", "Steady growth...", "Checking yield..." },
+	[1] = { "Trading steel...", "Analyzing market...", "Optimizing..." },
+	[2] = { "BUYING ENERGY!", "Gacha roll!", "High risk trade!" },
+}
+
+-- Show a temporary text bubble above an NPC model
+local function showActionBubble(model: Model, text: string, duration: number)
+	local head = model:FindFirstChild("Head") :: Part?
+	if not head then return end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "ActionBubble"
+	billboard.Adornee = head
+	billboard.Size = UDim2.new(0, 220, 0, 40)
+	billboard.StudsOffset = Vector3.new(0, 4.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = head
+
+	local bg = Instance.new("Frame")
+	bg.Name = "BubbleBG"
+	bg.Size = UDim2.new(1, 0, 1, 0)
+	bg.BackgroundColor3 = Color3.fromRGB(10, 10, 30)
+	bg.BackgroundTransparency = 0.3
+	bg.BorderSizePixel = 0
+	bg.Parent = billboard
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = bg
+
+	local label = Instance.new("TextLabel")
+	label.Name = "BubbleText"
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(0, 255, 220)
+	label.TextStrokeTransparency = 0.4
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	label.TextSize = 14
+	label.Font = Enum.Font.GothamBold
+	label.Text = text
+	label.Parent = billboard
+
+	task.delay(duration, function()
+		if billboard and billboard.Parent then
+			billboard:Destroy()
+		end
+	end)
+end
+
 -- Build a simple humanoid NPC model from Parts
 local function createNPCModel(agentData: any): Model
 	local name = agentData.name or agentData.id or "Agent"
@@ -224,36 +279,47 @@ while true do
 
 			-- Skip dead agents
 			if agent.alive == false then
-					if agentModels[agentId] then
-						print("[AgentSimulator] Agent died, removing model:", agentId)
-						agentModels[agentId]:Destroy()
-						agentModels[agentId] = nil
-						wanderTargets[agentId] = nil
-					end
-					continue
+				if agentModels[agentId] then
+					print("[AgentSimulator] Agent died, removing model:", agentId)
+					agentModels[agentId]:Destroy()
+					agentModels[agentId] = nil
+					wanderTargets[agentId] = nil
 				end
-
-				activeIds[agentId] = true
-
-				if not agentModels[agentId] then
-					-- Spawn new NPC
-					local model = createNPCModel(agent)
-					agentModels[agentId] = model
-					print(string.format(
-						"[AgentSimulator] Spawned NPC: %s | Strategy: %s | Score: %d",
-						agent.name or agentId,
-						strategyNames[agent.strategy] or "Unknown",
-						agent.score or 0
-					))
-				else
-					-- Update existing NPC
-					updateAgentModel(agentModels[agentId], agent)
-				end
+				continue
 			end
 
-			-- Remove models for agents no longer in the game state
-			removeStaleAgents(activeIds)
+			activeIds[agentId] = true
+
+			if not agentModels[agentId] then
+				-- Spawn new NPC
+				local model = createNPCModel(agent)
+				agentModels[agentId] = model
+				print(string.format(
+					"[AgentSimulator] Spawned NPC: %s | Strategy: %s | Score: %d",
+					agent.name or agentId,
+					strategyNames[agent.strategy] or "Unknown",
+					agent.score or 0
+				))
+			else
+				-- Update existing NPC
+				updateAgentModel(agentModels[agentId], agent)
+			end
+
+			-- Occasionally show an action bubble
+			local now = tick()
+			if not lastBubbleTime[agentId] or (now - lastBubbleTime[agentId]) >= BUBBLE_INTERVAL then
+				lastBubbleTime[agentId] = now
+				local phrases = actionPhrases[agent.strategy] or actionPhrases[1]
+				local phrase = phrases[math.random(1, #phrases)]
+				local model = agentModels[agentId]
+				if model then
+					showActionBubble(model, phrase, 4)
+				end
+			end
 		end
+
+		-- Remove models for agents no longer in the game state
+		removeStaleAgents(activeIds)
 	else
 		warn("[AgentSimulator] Failed to fetch game state")
 	end

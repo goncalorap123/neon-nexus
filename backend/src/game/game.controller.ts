@@ -23,8 +23,8 @@ export class GameController {
   }
 
   @Post('reveal-event')
-  async revealEvent(@Body() body: { playerId: string }) {
-    const result = await this.gameService.revealRandomEvent(body.playerId);
+  async revealEvent(@Body() body: { playerId: string; eventType: number }) {
+    const result = await this.gameService.revealRandomEvent(body.playerId, body.eventType ?? 0);
     return { success: true, data: result };
   }
 

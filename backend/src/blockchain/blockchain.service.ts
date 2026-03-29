@@ -71,6 +71,24 @@ export class BlockchainService implements OnModuleInit {
     return { hash: tx.hash };
   }
 
+  // Fund an agent wallet with native FLOW from the deploy wallet
+  async fundWallet(toAddress: string, amountInEther: string): Promise<{ hash: string }> {
+    const config = getEnvConfig();
+    const signer = new ethers.Wallet(config.DEPLOY_WALLET_KEY, this.provider);
+    const tx = await signer.sendTransaction({
+      to: toAddress,
+      value: ethers.parseEther(amountInEther),
+    });
+    await tx.wait();
+    return { hash: tx.hash };
+  }
+
+  // Get native FLOW balance of an address
+  async getBalance(address: string): Promise<string> {
+    const balance = await this.provider.getBalance(address);
+    return ethers.formatEther(balance);
+  }
+
   // NeonNexus encode methods
   encodeRegisterAgent(player: string, agentWallet: string): string {
     return this.neonNexus.interface.encodeFunctionData('registerAgent', [player, agentWallet]);

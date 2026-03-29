@@ -128,4 +128,14 @@ function HttpBridge.executeTrade(playerId: string, offerId: number, quantity: st
 	})
 end
 
+-- Get agent action history
+function HttpBridge.getAgentHistory(playerId: string)
+	return HttpBridge.request("GET", "/agent/" .. playerId .. "/history")
+end
+
+-- Get agent FLOW balance
+function HttpBridge.getAgentBalance(playerId: string)
+	return HttpBridge.request("GET", "/agent/" .. playerId .. "/balance")
+end
+
 return HttpBridge

@@ -1,11 +1,15 @@
 import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { AgentService } from './agent.service';
+import { TransactionLogService } from '../database/transaction-log.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 
 @Controller('api/agent')
 @UseGuards(ApiKeyGuard)
 export class AgentController {
-  constructor(private readonly agentService: AgentService) {}
+  constructor(
+    private readonly agentService: AgentService,
+    private readonly txLogService: TransactionLogService,
+  ) {}
 
   @Post('create')
   async createAgent(@Body() body: { playerId: string }) {
@@ -32,5 +36,17 @@ export class AgentController {
   async setStrategy(@Body() body: { playerId: string; strategy: number }) {
     const result = await this.agentService.setStrategy(body.playerId, body.strategy);
     return { success: true, data: result };
+  }
+
+  @Get(':playerId/history')
+  async getHistory(@Param('playerId') playerId: string) {
+    const history = await this.txLogService.getHistory(playerId);
+    return { success: true, data: history };
+  }
+
+  @Get(':playerId/balance')
+  async getBalance(@Param('playerId') playerId: string) {
+    const balance = await this.agentService.getFlowBalance(playerId);
+    return { success: true, data: { flowBalance: balance } };
   }
 }

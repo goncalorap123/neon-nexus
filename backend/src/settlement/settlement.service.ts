@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AgentService } from '../agent/agent.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { TransactionLogService } from '../database/transaction-log.service';
 
 // Yield rates per hour based on strategy (in token base units, e.g. 6 decimals)
 const YIELD_RATES = [
@@ -17,6 +18,8 @@ const RESOURCE_WEIGHTS: Record<number, number[]> = {
   2: [15, 20, 45, 20],
 };
 
+const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
+
 @Injectable()
 export class SettlementService {
   private readonly logger = new Logger(SettlementService.name);
@@ -24,6 +27,7 @@ export class SettlementService {
   constructor(
     private readonly agentService: AgentService,
     private readonly blockchainService: BlockchainService,
+    private readonly txLogService: TransactionLogService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -55,6 +59,11 @@ export class SettlementService {
           this.blockchainService.getNeonNexusAddress(),
           yieldData,
         );
+
+        await this.txLogService.log(agent.playerId, agent.address, 'yield_distributed', '', {
+          yieldAmount: yieldAmount.toString(),
+          strategyType,
+        });
 
         this.logger.log(`Distributed ${yieldAmount} yield to agent ${agent.playerId}`);
       } catch (error) {
@@ -103,7 +112,37 @@ export class SettlementService {
           );
         }
 
+        await this.txLogService.log(agent.playerId, agent.address, 'resources_minted', '', {
+          strategyType,
+          reasoning: `Strategy ${['Conservative', 'Balanced', 'Aggressive'][strategyType]} resource allocation based on yield earned`,
+        });
+
         this.logger.log(`Minted resources for agent ${agent.playerId} based on strategy ${strategyType}`);
+
+        // Check for surplus resources (>200) and auto-list for trade
+        for (let resType = 0; resType < 4; resType++) {
+          try {
+            const balance = await this.blockchainService.getAgentResources(agent.address, resType);
+            if (balance > 200n) {
+              const sellAmount = balance - 100n; // Keep 100, sell the rest
+              const tradeData = this.blockchainService.encodeCreateOffer(agent.address, resType, sellAmount, 1n);
+              await this.blockchainService.ownerSendTransaction(
+                this.blockchainService.getAgentTradingAddress(),
+                tradeData,
+              );
+
+              await this.txLogService.log(agent.playerId, agent.address, 'auto_trade', '', {
+                resource: RESOURCE_NAMES[resType],
+                amount: sellAmount.toString(),
+                reasoning: `Surplus detected (${balance.toString()} > 200), listing ${sellAmount.toString()} for sale`,
+              });
+
+              this.logger.log(`Auto-listed ${sellAmount} ${RESOURCE_NAMES[resType]} for agent ${agent.playerId}`);
+            }
+          } catch (error) {
+            this.logger.error(`Failed surplus check for ${agent.playerId} resource ${resType}: ${error.message}`);
+          }
+        }
 
         if (strategyType === 2) {
           await this.autoTrade(agent.address);

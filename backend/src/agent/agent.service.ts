@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { PrivyService } from '../privy/privy.service';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { AgentEntity } from '../database/entities/agent.entity';
+import { TransactionLogService } from '../database/transaction-log.service';
 import { getEnvConfig } from '../config/env.config';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class AgentService {
     private readonly agentRepo: Repository<AgentEntity>,
     private readonly privyService: PrivyService,
     private readonly blockchainService: BlockchainService,
+    private readonly txLogService: TransactionLogService,
   ) {}
 
   async createAgent(playerId: string): Promise<{ walletId: string; address: string; txHash: string }> {
@@ -28,6 +30,20 @@ export class AgentService {
       this.blockchainService.getNeonNexusAddress(),
       data,
     );
+
+    // Fund the agent wallet with 10 FLOW
+    const fundTx = await this.blockchainService.fundWallet(wallet.address, '10');
+
+    // Log agent creation
+    await this.txLogService.log(playerId, wallet.address, 'agent_created', tx.hash, {
+      walletId: wallet.id,
+      address: wallet.address,
+    });
+
+    // Log wallet funding
+    await this.txLogService.log(playerId, wallet.address, 'wallet_funded', fundTx.hash, {
+      amount: '10 FLOW',
+    });
 
     const agent = this.agentRepo.create({
       playerId,
@@ -81,6 +97,11 @@ export class AgentService {
       data,
     );
 
+    await this.txLogService.log(playerId, agent.address, 'strategy_changed', tx.hash, {
+      strategy,
+      strategyName: ['Conservative', 'Balanced', 'Aggressive'][strategy],
+    });
+
     agent.strategyType = strategy;
     await this.agentRepo.save(agent);
 
@@ -91,6 +112,12 @@ export class AgentService {
     const agent = await this.agentRepo.findOneBy({ playerId });
     if (!agent) return null;
     return { walletId: agent.walletId, address: agent.address };
+  }
+
+  async getFlowBalance(playerId: string): Promise<string> {
+    const agent = await this.agentRepo.findOneBy({ playerId });
+    if (!agent) return '0';
+    return this.blockchainService.getBalance(agent.address);
   }
 
   async getAllAgents(): Promise<AgentEntity[]> {

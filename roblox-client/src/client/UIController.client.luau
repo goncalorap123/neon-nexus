@@ -11,6 +11,7 @@ local SetStrategyRF = Remotes:WaitForChild("SetStrategy") :: RemoteFunction
 local GetGameStateRF = Remotes:WaitForChild("GetGameState") :: RemoteFunction
 local TriggerEventRF = Remotes:WaitForChild("TriggerEvent") :: RemoteFunction
 local GetLeaderboardRF = Remotes:WaitForChild("GetLeaderboard") :: RemoteFunction
+local GetAgentHistoryRF = Remotes:WaitForChild("GetAgentHistory") :: RemoteFunction
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 
@@ -124,7 +125,7 @@ hudContainer.Name = "HUDContainer"
 hudContainer.Parent = screenGui
 
 -- Agent Status Panel (top-left)
-local statusFrame = createFrame("StatusFrame", UDim2.new(0, 10, 0, 10), UDim2.new(0, 260, 0, 180))
+local statusFrame = createFrame("StatusFrame", UDim2.new(0, 10, 0, 10), UDim2.new(0, 260, 0, 240))
 statusFrame.Visible = false
 statusFrame.Parent = hudContainer
 
@@ -140,8 +141,14 @@ local steelLabel = createLabel(statusFrame, "Steel", UDim2.new(0.5, 0, 0, 122), 
 local energyLabel = createLabel(statusFrame, "Energy", UDim2.new(0, 10, 0, 148), UDim2.new(0.5, -10, 0, 20), "Energy: 0")
 local foodLabel = createLabel(statusFrame, "Food", UDim2.new(0.5, 0, 0, 148), UDim2.new(0.5, -10, 0, 20), "Food: 0")
 
+local flowBalanceLabel = createLabel(statusFrame, "FlowBalance", UDim2.new(0, 10, 0, 174), UDim2.new(1, -20, 0, 20), "FLOW: 0")
+local scoreLabel = createLabel(statusFrame, "Score", UDim2.new(0, 10, 0, 198), UDim2.new(1, -20, 0, 28), "Score: 0")
+scoreLabel.TextSize = 20
+scoreLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
+scoreLabel.Font = Enum.Font.GothamBold
+
 -- Strategy Selector
-local strategyFrame = createFrame("StrategyFrame", UDim2.new(0, 10, 0, 200), UDim2.new(0, 260, 0, 100))
+local strategyFrame = createFrame("StrategyFrame", UDim2.new(0, 10, 0, 260), UDim2.new(0, 260, 0, 100))
 strategyFrame.Visible = false
 strategyFrame.Parent = hudContainer
 
@@ -156,7 +163,7 @@ balancedBtn.BackgroundColor3 = Color3.fromRGB(140, 140, 40)
 aggressiveBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
 
 -- Event Trigger Panel
-local eventFrame = createFrame("EventFrame", UDim2.new(0, 10, 0, 310), UDim2.new(0, 260, 0, 60))
+local eventFrame = createFrame("EventFrame", UDim2.new(0, 10, 0, 370), UDim2.new(0, 260, 0, 60))
 eventFrame.Visible = false
 eventFrame.Parent = hudContainer
 
@@ -188,6 +195,128 @@ for i = 1, 10 do
 	table.insert(leaderboardLabels, lbl)
 end
 
+-- Agent Activity Feed (left side, below events)
+local activityFrame = createFrame("ActivityFrame", UDim2.new(0, 10, 0, 440), UDim2.new(0, 260, 0, 260))
+activityFrame.Visible = false
+activityFrame.Parent = hudContainer
+
+createLabel(activityFrame, "Title", UDim2.new(0, 10, 0, 5), UDim2.new(1, -20, 0, 25), "AGENT ACTIVITY")
+
+local activityScroll = Instance.new("ScrollingFrame")
+activityScroll.Name = "ActivityScroll"
+activityScroll.Position = UDim2.new(0, 5, 0, 30)
+activityScroll.Size = UDim2.new(1, -10, 1, -35)
+activityScroll.BackgroundTransparency = 1
+activityScroll.BorderSizePixel = 0
+activityScroll.ScrollBarThickness = 4
+activityScroll.ScrollBarImageColor3 = Color3.fromRGB(0, 200, 255)
+activityScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+activityScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+activityScroll.Parent = activityFrame
+
+local activityLayout = Instance.new("UIListLayout")
+activityLayout.SortOrder = Enum.SortOrder.LayoutOrder
+activityLayout.Padding = UDim.new(0, 2)
+activityLayout.Parent = activityScroll
+
+local MAX_ACTIVITY_ENTRIES = 15
+
+local function clearActivityFeed()
+	for _, child in ipairs(activityScroll:GetChildren()) do
+		if child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+end
+
+local function updateActivityFeed(entries: any)
+	clearActivityFeed()
+	if not entries or type(entries) ~= "table" then return end
+
+	local count = math.min(#entries, MAX_ACTIVITY_ENTRIES)
+	for i = 1, count do
+		local entry = entries[i]
+		local timestamp = entry.timestamp or ""
+		local action = entry.action or entry.description or ""
+		-- Extract time portion (HH:MM) if timestamp is long
+		local timeStr = timestamp
+		if #timeStr > 5 then
+			local h, m = string.match(timeStr, "(%d+):(%d+)")
+			if h and m then
+				timeStr = h .. ":" .. m
+			end
+		end
+
+		local lbl = Instance.new("TextLabel")
+		lbl.Name = "Activity" .. i
+		lbl.Size = UDim2.new(1, 0, 0, 18)
+		lbl.BackgroundTransparency = 1
+		lbl.TextColor3 = Color3.fromRGB(180, 180, 210)
+		lbl.TextSize = 11
+		lbl.Font = Enum.Font.Gotham
+		lbl.Text = timeStr .. " - " .. action
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		lbl.LayoutOrder = i
+		lbl.Parent = activityScroll
+	end
+end
+
+-- ============================================================
+-- Event Outcome Popup
+-- ============================================================
+
+local popupFrame = Instance.new("Frame")
+popupFrame.Name = "EventPopup"
+popupFrame.Position = UDim2.new(0.5, -200, 0.4, -40)
+popupFrame.Size = UDim2.new(0, 400, 0, 80)
+popupFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 30)
+popupFrame.BackgroundTransparency = 0.1
+popupFrame.BorderSizePixel = 0
+popupFrame.Visible = false
+popupFrame.ZIndex = 10
+popupFrame.Parent = screenGui
+
+local popupCorner = Instance.new("UICorner")
+popupCorner.CornerRadius = UDim.new(0, 10)
+popupCorner.Parent = popupFrame
+
+local popupStroke = Instance.new("UIStroke")
+popupStroke.Color = Color3.fromRGB(0, 200, 255)
+popupStroke.Thickness = 2
+popupStroke.Parent = popupFrame
+
+local popupLabel = Instance.new("TextLabel")
+popupLabel.Name = "PopupText"
+popupLabel.Size = UDim2.new(1, -20, 1, -10)
+popupLabel.Position = UDim2.new(0, 10, 0, 5)
+popupLabel.BackgroundTransparency = 1
+popupLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+popupLabel.TextSize = 20
+popupLabel.Font = Enum.Font.GothamBold
+popupLabel.Text = ""
+popupLabel.TextWrapped = true
+popupLabel.ZIndex = 11
+popupLabel.Parent = popupFrame
+
+local RARITY_COLORS = {
+	legendary = Color3.fromRGB(255, 215, 0),   -- gold
+	rare = Color3.fromRGB(180, 80, 255),        -- purple
+	common = Color3.fromRGB(255, 255, 255),     -- white
+}
+
+local function showEventPopup(text: string, rarity: string?)
+	local color = RARITY_COLORS[rarity or "common"] or RARITY_COLORS.common
+	popupLabel.Text = text
+	popupLabel.TextColor3 = color
+	popupStroke.Color = color
+	popupFrame.Visible = true
+
+	task.delay(2, function()
+		popupFrame.Visible = false
+	end)
+end
+
 -- ============================================================
 -- State
 -- ============================================================
@@ -204,6 +333,7 @@ local function showHUD()
 	strategyFrame.Visible = true
 	eventFrame.Visible = true
 	leaderboardFrame.Visible = true
+	activityFrame.Visible = true
 	deployFrame.Visible = false
 end
 
@@ -236,6 +366,14 @@ local function updateStatusUI(data: any)
 		energyLabel.Text = "Energy: " .. tostring(data.resources.energy or 0)
 		foodLabel.Text = "Food: " .. tostring(data.resources.food or 0)
 	end
+
+	-- FLOW balance and score from backend
+	if data.flowBalance ~= nil then
+		flowBalanceLabel.Text = "FLOW: " .. tostring(data.flowBalance)
+	end
+	if data.score ~= nil then
+		scoreLabel.Text = "Score: " .. tostring(data.score)
+	end
 end
 
 local function updateLeaderboardUI(entries: any)
@@ -262,6 +400,11 @@ local function refreshGameState()
 	local lbResult = GetLeaderboardRF:InvokeServer()
 	if lbResult and type(lbResult) == "table" then
 		updateLeaderboardUI(lbResult)
+	end
+
+	local historyResult = GetAgentHistoryRF:InvokeServer()
+	if historyResult and type(historyResult) == "table" then
+		updateActivityFeed(historyResult)
 	end
 end
 
@@ -321,12 +464,27 @@ aggressiveBtn.MouseButton1Click:Connect(function() setStrategy(Config.STRATEGY_A
 -- Event Buttons
 -- ============================================================
 
+local function parseEventRarity(result: any): (string, string)
+	if type(result) ~= "table" then
+		return tostring(result), "common"
+	end
+	local rarity = result.rarity or "common"
+	local desc = result.description or result.result or ""
+	local bonus = result.bonus or result.amount or ""
+	if bonus ~= "" then
+		desc = desc .. " +" .. tostring(bonus)
+	end
+	return desc, string.lower(tostring(rarity))
+end
+
 gachaBtn.MouseButton1Click:Connect(function()
 	gachaBtn.Text = "Rolling..."
 	local result = TriggerEventRF:InvokeServer(Config.EVENT_GACHA)
 	gachaBtn.Text = "Gacha Roll"
 	if result then
 		print("[UI] Gacha result:", result)
+		local desc, rarity = parseEventRarity(result)
+		showEventPopup("GACHA ROLL: " .. string.upper(rarity) .. "! " .. desc, rarity)
 		refreshGameState()
 	end
 end)
@@ -339,6 +497,8 @@ eventBtn.MouseButton1Click:Connect(function()
 	eventBtn.Text = "Random Event"
 	if result then
 		print("[UI] Event result:", result)
+		local desc, rarity = parseEventRarity(result)
+		showEventPopup("RANDOM EVENT: " .. desc, rarity)
 		refreshGameState()
 	end
 end)

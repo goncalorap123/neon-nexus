@@ -19,6 +19,7 @@ local SetStrategyRF = createRemoteFunction("SetStrategy")
 local GetGameStateRF = createRemoteFunction("GetGameState")
 local TriggerEventRF = createRemoteFunction("TriggerEvent")
 local GetLeaderboardRF = createRemoteFunction("GetLeaderboard")
+local GetAgentHistoryRF = createRemoteFunction("GetAgentHistory")
 
 local function getPlayerId(plr: Player): string
 	return tostring(plr.UserId)
@@ -84,6 +85,15 @@ end
 -- GetLeaderboard: returns array of agents
 GetLeaderboardRF.OnServerInvoke = function(_plr)
 	local success, data = HttpBridge.getLeaderboard()
+	if success and data then
+		return data
+	end
+	return {}
+end
+
+-- GetAgentHistory: returns array of recent agent actions
+GetAgentHistoryRF.OnServerInvoke = function(plr)
+	local success, data = HttpBridge.getAgentHistory(getPlayerId(plr))
 	if success and data then
 		return data
 	end

@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AgentEntity } from './entities/agent.entity';
 import { TradeOfferEntity } from './entities/trade-offer.entity';
+import { TransactionLogEntity } from './entities/transaction-log.entity';
+import { TransactionLogService } from './transaction-log.service';
 
 @Module({
   imports: [
@@ -9,11 +11,12 @@ import { TradeOfferEntity } from './entities/trade-offer.entity';
       type: 'sqljs',
       autoSave: true,
       location: 'neon-nexus.db',
-      entities: [AgentEntity, TradeOfferEntity],
+      entities: [AgentEntity, TradeOfferEntity, TransactionLogEntity],
       synchronize: true,
     }),
-    TypeOrmModule.forFeature([AgentEntity, TradeOfferEntity]),
+    TypeOrmModule.forFeature([AgentEntity, TradeOfferEntity, TransactionLogEntity]),
   ],
-  exports: [TypeOrmModule],
+  providers: [TransactionLogService],
+  exports: [TypeOrmModule, TransactionLogService],
 })
 export class DatabaseModule {}
