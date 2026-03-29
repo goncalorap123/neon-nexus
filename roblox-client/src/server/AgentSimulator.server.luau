@@ -14,10 +14,21 @@ local agentFolder = Instance.new("Folder")
 agentFolder.Name = "AgentNPCs"
 agentFolder.Parent = workspace
 
--- Raycast params for obstacle detection (exclude NPC folder)
+-- Raycast params for obstacle detection (exclude NPCs and resource nodes)
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.FilterDescendantsInstances = { agentFolder }
+
+-- Update filter once WorldBuilder has created ResourceSpawns
+task.delay(4, function()
+	local cityWorld = workspace:FindFirstChild("CityWorld")
+	if cityWorld then
+		local resFolder = cityWorld:FindFirstChild("ResourceSpawns")
+		if resFolder then
+			rayParams.FilterDescendantsInstances = { agentFolder, resFolder }
+		end
+	end
+end)
 
 local OBSTACLE_CHECK_DIST = 4 -- how far ahead to check for walls
 local STEER_ANGLE = math.rad(60) -- angle to steer when blocked
