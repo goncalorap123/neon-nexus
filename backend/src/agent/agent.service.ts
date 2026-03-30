@@ -141,6 +141,10 @@ export class AgentService {
     return { walletId: agent.walletId, address: agent.address };
   }
 
+  async removeAgent(playerId: string): Promise<void> {
+    await this.agentRepo.delete({ playerId });
+  }
+
   async getFlowBalance(playerId: string): Promise<string> {
     const agent = await this.agentRepo.findOneBy({ playerId });
     if (!agent) return '0';

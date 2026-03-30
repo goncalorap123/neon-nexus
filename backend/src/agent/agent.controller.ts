@@ -56,4 +56,10 @@ export class AgentController {
     const agents = await this.agentService.createHouseAgents(count, 0n);
     return { success: true, data: { spawned: agents.length } };
   }
+
+  @Post('remove-agent')
+  async removeAgent(@Body() body: { playerId: string }) {
+    await this.agentService.removeAgent(body.playerId);
+    return { success: true };
+  }
 }
