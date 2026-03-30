@@ -23,22 +23,29 @@ local GetAgentHistoryRF = createRemoteFunction("GetAgentHistory")
 local GetRoundStatusRF = createRemoteFunction("GetRoundStatus")
 local GetAgentActionsRF = createRemoteFunction("GetAgentActions")
 
+-- Map Roblox player -> their agent's playerId (set on deploy)
+local playerAgentIds: { [number]: string } = {}
+
 local function getPlayerId(plr: Player): string
-	return tostring(plr.UserId)
+	return playerAgentIds[plr.UserId] or tostring(plr.UserId)
 end
 
 -- CreateAgent: creates wallet + registers on-chain, returns result directly
-CreateAgentRF.OnServerInvoke = function(plr)
-	local playerId = getPlayerId(plr)
-	print("[GameManager] Deploying agent for", plr.Name, "(", playerId, ")")
+CreateAgentRF.OnServerInvoke = function(plr, agentName: string?)
+	local displayName = agentName or (plr.Name .. "'s Agent")
+	-- Store the mapping so all future calls use this name
+	playerAgentIds[plr.UserId] = displayName
+	print("[GameManager] Deploying agent", displayName, "for", plr.Name)
 
-	local success, data = HttpBridge.createAgent(playerId)
+	local success, data = HttpBridge.createAgent(displayName)
 	if success and data then
 		print("[GameManager] Agent deployed:", data.address or "unknown")
 		return data -- { walletId, address, txHash }
 	end
 
 	warn("[GameManager] Failed to deploy agent for", plr.Name)
+	-- Clear mapping on failure
+	playerAgentIds[plr.UserId] = nil
 	return nil
 end
 

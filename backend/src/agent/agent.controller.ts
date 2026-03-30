@@ -73,7 +73,7 @@ export class AgentController {
       try {
         const onChain = await this.blockchainService.getAgent(agent.address);
         if (Number(onChain?.deposit ?? 0) === 0) {
-          await this.agentService.fundAndDeposit(agent.address, 10_000_000n);
+          await this.agentService.fundAndDeposit(agent.address, 1_000_000_000n);
           funded++;
         }
       } catch (e) {

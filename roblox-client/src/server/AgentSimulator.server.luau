@@ -143,6 +143,11 @@ local lingerDuration: { [string]: number } = {}
 -- Track last action bubble time per agent
 local lastBubbleTime: { [string]: number } = {}
 
+-- Stuck detection: track last known distance to target
+local lastDistToTarget: { [string]: number } = {}
+local lastProgressTime: { [string]: number } = {}
+local STUCK_TIMEOUT = 5 -- seconds without progress before abandoning target
+
 -- Resource cooldown tracking: Part -> respawn time
 local resourceCooldowns: { [Part]: number } = {}
 local RESOURCE_RESPAWN_TIME = 30 -- seconds before a gathered resource reappears
@@ -972,18 +977,43 @@ RunService.Heartbeat:Connect(function(dt)
 				isMoving[agentId] = true
 				arrivalTime[agentId] = nil -- reset if we start moving again
 
-				-- Check for obstacles and steer around them
-				local desiredFacing = diff.Unit
-				local moveDir = avoidObstacles(currentPos, desiredFacing)
+				-- Stuck detection: if no progress for STUCK_TIMEOUT, abandon target
+				local prevDist = lastDistToTarget[agentId] or dist
+				if dist < prevDist - 0.5 then
+					-- Making progress
+					lastProgressTime[agentId] = t
+				end
+				lastDistToTarget[agentId] = dist
 
-				-- Smooth turn: lerp facing direction so NPC doesn't snap-rotate
-				local curFacing = agentFacing[agentId]
-				agentFacing[agentId] = (curFacing + (moveDir - curFacing) * math.min(1, dt * 5)).Unit
+				if not lastProgressTime[agentId] then
+					lastProgressTime[agentId] = t
+				end
 
-				-- Move at consistent speed (studs per second)
-				local step = math.min(MOVE_SPEED * dt, dist) -- don't overshoot
-				local newPos = currentPos + moveDir * step
-				torso.Position = Vector3.new(newPos.X, GROUND_Y, newPos.Z)
+				if (t - lastProgressTime[agentId]) > STUCK_TIMEOUT then
+					-- Stuck! Pick a new random target away from current direction
+					local escapeAngle = math.random() * math.pi * 2
+					local escapeDist = 15 + math.random() * 15
+					wanderTargets[agentId] = Vector3.new(
+						math.clamp(currentPos.X + math.cos(escapeAngle) * escapeDist, -SPAWN_RANGE, SPAWN_RANGE),
+						GROUND_Y,
+						math.clamp(currentPos.Z + math.sin(escapeAngle) * escapeDist, -SPAWN_RANGE, SPAWN_RANGE)
+					)
+					lastProgressTime[agentId] = t
+					lastDistToTarget[agentId] = nil
+				else
+					-- Check for obstacles and steer around them
+					local desiredFacing = diff.Unit
+					local moveDir = avoidObstacles(currentPos, desiredFacing)
+
+					-- Smooth turn: lerp facing direction so NPC doesn't snap-rotate
+					local curFacing = agentFacing[agentId]
+					agentFacing[agentId] = (curFacing + (moveDir - curFacing) * math.min(1, dt * 5)).Unit
+
+					-- Move at consistent speed (studs per second)
+					local step = math.min(MOVE_SPEED * dt, dist) -- don't overshoot
+					local newPos = currentPos + moveDir * step
+					torso.Position = Vector3.new(newPos.X, GROUND_Y, newPos.Z)
+				end
 			end
 		end
 
@@ -1026,6 +1056,8 @@ local function removeStaleAgents(activeIds: { [string]: boolean })
 			lingerDuration[agentId] = nil
 			lastBubbleTime[agentId] = nil
 			agentActions[agentId] = nil
+			lastDistToTarget[agentId] = nil
+			lastProgressTime[agentId] = nil
 		end
 	end
 end

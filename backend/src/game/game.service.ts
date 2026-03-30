@@ -6,9 +6,9 @@ import { TransactionLogService } from '../database/transaction-log.service';
 
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
 const BURN_RATES: Record<number, { food: number; energy: number }> = {
-  0: { food: 10, energy: 8 },
-  1: { food: 15, energy: 12 },
-  2: { food: 25, energy: 20 },
+  0: { food: 25, energy: 20 },
+  1: { food: 35, energy: 28 },
+  2: { food: 55, energy: 45 },
 };
 
 @Injectable()

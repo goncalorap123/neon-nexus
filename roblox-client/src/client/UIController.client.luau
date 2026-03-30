@@ -140,7 +140,7 @@ local strategyColors = {
 -- DEPLOY AGENT (shown initially)
 -- ============================================================
 
-local deployFrame = createFrame("DeployFrame", UDim2.new(0.5, -200, 0.5, -100), UDim2.new(0, 400, 0, 200))
+local deployFrame = createFrame("DeployFrame", UDim2.new(0.5, -200, 0.5, -120), UDim2.new(0, 400, 0, 250))
 deployFrame.BackgroundTransparency = 0.05
 
 local deployTitle = createLabel(deployFrame, "Title", UDim2.new(0, 0, 0, 15), UDim2.new(1, 0, 0, 30), "NEON NEXUS")
@@ -149,12 +149,42 @@ deployTitle.TextSize = 28
 deployTitle.TextColor3 = Color3.fromRGB(0, 255, 220)
 deployTitle.Font = Enum.Font.GothamBold
 
-local deploySubtitle = createLabel(deployFrame, "Subtitle", UDim2.new(0, 0, 0, 50), UDim2.new(1, 0, 0, 25), "Deploy your AI fund manager to compete")
+local deploySubtitle = createLabel(deployFrame, "Subtitle", UDim2.new(0, 0, 0, 50), UDim2.new(1, 0, 0, 25), "Name your AI fund manager and deploy")
 deploySubtitle.TextXAlignment = Enum.TextXAlignment.Center
 deploySubtitle.TextSize = 14
 deploySubtitle.TextColor3 = Color3.fromRGB(150, 150, 180)
 
-local deployBtn = createButton(deployFrame, "DeployBtn", UDim2.new(0.5, -120, 0, 90), UDim2.new(0, 240, 0, 55), "DEPLOY AGENT")
+-- Name input
+local nameInputBg = Instance.new("Frame")
+nameInputBg.Name = "NameInputBg"
+nameInputBg.Position = UDim2.new(0.5, -120, 0, 80)
+nameInputBg.Size = UDim2.new(0, 240, 0, 36)
+nameInputBg.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+nameInputBg.BorderSizePixel = 0
+nameInputBg.Parent = deployFrame
+local nameInputCorner = Instance.new("UICorner")
+nameInputCorner.CornerRadius = UDim.new(0, 6)
+nameInputCorner.Parent = nameInputBg
+local nameInputStroke = Instance.new("UIStroke")
+nameInputStroke.Color = Color3.fromRGB(0, 200, 255)
+nameInputStroke.Thickness = 1
+nameInputStroke.Parent = nameInputBg
+
+local nameInput = Instance.new("TextBox")
+nameInput.Name = "NameInput"
+nameInput.Position = UDim2.new(0, 8, 0, 0)
+nameInput.Size = UDim2.new(1, -16, 1, 0)
+nameInput.BackgroundTransparency = 1
+nameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+nameInput.PlaceholderText = "Enter agent name..."
+nameInput.PlaceholderColor3 = Color3.fromRGB(100, 100, 130)
+nameInput.TextSize = 16
+nameInput.Font = Enum.Font.GothamBold
+nameInput.Text = ""
+nameInput.ClearTextOnFocus = false
+nameInput.Parent = nameInputBg
+
+local deployBtn = createButton(deployFrame, "DeployBtn", UDim2.new(0.5, -120, 0, 130), UDim2.new(0, 240, 0, 55), "DEPLOY AGENT")
 deployBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 120)
 deployBtn.TextSize = 22
 deployBtn.Font = Enum.Font.GothamBold
@@ -164,7 +194,7 @@ deployBtnStroke.Color = Color3.fromRGB(0, 255, 180)
 deployBtnStroke.Thickness = 2
 deployBtnStroke.Parent = deployBtn
 
-local deployStatus = createLabel(deployFrame, "Status", UDim2.new(0, 0, 0, 155), UDim2.new(1, 0, 0, 25), "")
+local deployStatus = createLabel(deployFrame, "Status", UDim2.new(0, 0, 0, 200), UDim2.new(1, 0, 0, 25), "")
 deployStatus.TextXAlignment = Enum.TextXAlignment.Center
 deployStatus.TextSize = 13
 deployStatus.TextColor3 = Color3.fromRGB(0, 200, 255)
@@ -849,19 +879,28 @@ end)
 deployBtn.MouseButton1Click:Connect(function()
 	if agentDeployed then return end
 
+	-- Validate name
+	local agentName = string.gsub(nameInput.Text, "^%s+", "")
+	agentName = string.gsub(agentName, "%s+$", "")
+	if agentName == "" then
+		agentName = player.Name .. "'s Agent"
+	end
+	-- Sanitize: max 20 chars, alphanumeric + spaces
+	agentName = string.sub(agentName, 1, 20)
+
 	deployBtn.Text = "DEPLOYING..."
 	deployBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
 	deployStatus.Text = "Creating Privy server wallet..."
 
 	task.wait(0.5)
-	deployStatus.Text = "Registering agent on Flow EVM..."
+	deployStatus.Text = "Registering " .. agentName .. " on Flow EVM..."
 
-	local result = CreateAgentRF:InvokeServer()
+	local result = CreateAgentRF:InvokeServer(agentName)
 
 	if result and result.address then
 		agentDeployed = true
 		local addr = truncAddr(result.address)
-		deployStatus.Text = "Agent deployed! Wallet: " .. addr
+		deployStatus.Text = agentName .. " deployed! Wallet: " .. addr
 		deployStatus.TextColor3 = Color3.fromRGB(0, 255, 150)
 
 		task.wait(1.5)

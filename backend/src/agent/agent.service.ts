@@ -12,8 +12,8 @@ import { getEnvConfig } from '../config/env.config';
 const STARTING_RESOURCES = {
   wood: 50n,
   steel: 50n,
-  energy: 100n,
-  food: 100n,
+  energy: 80n,
+  food: 80n,
 };
 
 @Injectable()
@@ -64,7 +64,7 @@ export class AgentService {
     await this.agentRepo.save(agent);
 
     // Seed resources + fund deposit in one batch
-    const depositAmt = 10_000_000n;
+    const depositAmt = 1_000_000_000n;
     const config = getEnvConfig();
     const deployAddr = new ethers.Wallet(config.DEPLOY_WALLET_KEY).address;
     const neonNexus = this.blockchainService.getNeonNexusAddress();
@@ -236,7 +236,7 @@ export class AgentService {
   // Create house-owned AI agents for a round — batched for speed
   async createHouseAgents(count: number, depositAmount: bigint): Promise<AgentEntity[]> {
     this.logger.log(`Creating ${count} house agents (batched)...`);
-    const depositAmt = 10_000_000n; // $10 in 6 decimal base units
+    const depositAmt = 1_000_000_000n; // $10 in 6 decimal base units
     const config = getEnvConfig();
     const deployAddr = new ethers.Wallet(config.DEPLOY_WALLET_KEY).address;
 

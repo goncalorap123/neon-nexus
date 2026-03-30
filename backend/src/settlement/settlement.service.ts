@@ -7,12 +7,13 @@ import { AiReasoningService, AgentDecisionContext } from '../ai/ai-reasoning.ser
 import { AgentActionService } from '../database/agent-action.service';
 
 // Yield rates per cycle (every 5 min) based on strategy (in token base units, 6 decimals)
-// With 10 token deposit (10_000_000 base): safe ~$0.08, balanced ~$0.15, aggressive ~$0.30 per cycle
-// Over ~10 cycles with 6 agents → ~$10 total yield pool
+// Formula: yieldAmount = (deposit * rate) / 1_000_000
+// With $1000 deposit (1_000_000_000 base): safe ~$0.08, balanced ~$0.15, aggressive ~$0.30 per cycle
+// ~0.015% per cycle ≈ 1.6% daily APY (simulated lending pool)
 const YIELD_RATES = [
-  8000n,    // conservative: ~$0.08/cycle
-  15000n,   // balanced: ~$0.15/cycle
-  30000n,   // aggressive: ~$0.30/cycle
+  80n,     // conservative: ~$0.08/cycle
+  150n,    // balanced: ~$0.15/cycle
+  300n,    // aggressive: ~$0.30/cycle
 ];
 
 // Resource distribution weights per strategy [wood, steel, energy, food]
@@ -23,12 +24,13 @@ const RESOURCE_WEIGHTS: Record<number, number[]> = {
 };
 
 // Burn rates per cycle based on strategy [food, energy]
-// Starting resources: 100 food, 100 energy
-// Conservative: ~10 cycles of food (50 min), Balanced: ~7 cycles (35 min), Aggressive: ~4 cycles (20 min)
+// Starting: 80 food, 80 energy. Games last 4-8 cycles (20-40 min)
+// Without gathering: Aggressive dies cycle 2, Balanced cycle 2-3, Safe cycle 3-4
+// With gathering: extends 1-3 cycles but aggressive still bleeds out
 const BURN_RATES: Record<number, { food: bigint; energy: bigint }> = {
-  0: { food: 10n, energy: 8n },    // conservative: cheap, survive ~10 cycles
-  1: { food: 15n, energy: 12n },   // balanced: medium, survive ~7 cycles
-  2: { food: 25n, energy: 20n },   // aggressive: expensive, survive ~4 cycles
+  0: { food: 25n, energy: 20n },   // conservative: ~3 cycles raw
+  1: { food: 35n, energy: 28n },   // balanced: ~2 cycles raw
+  2: { food: 55n, energy: 45n },   // aggressive: ~1 cycle raw
 };
 
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
