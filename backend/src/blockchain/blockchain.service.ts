@@ -156,21 +156,45 @@ export class BlockchainService implements OnModuleInit {
     return this.sendManagedTx({ to, data });
   }
 
-  // Fire multiple txs with rate limit spacing, wait for all confirmations at the end
+  // Fire txs in small chunks to avoid RPC rate limits (40 req/s on public Flow RPC)
+  // Fire 5, wait for confirmations, repeat
   async ownerSendBatch(txs: Array<{ to: string; data: string }>): Promise<string[]> {
-    const pending: ethers.TransactionResponse[] = [];
-    for (let i = 0; i < txs.length; i++) {
-      pending.push(await this.fireTransaction({ to: txs[i].to, data: txs[i].data }));
-      // Pace at ~10 tx/s to stay well under 40 req/s limit (each tx = ~3-4 RPC calls)
-      if (i < txs.length - 1) {
-        await new Promise((r) => setTimeout(r, 300));
+    const CHUNK_SIZE = 5;
+    const hashes: string[] = [];
+
+    for (let start = 0; start < txs.length; start += CHUNK_SIZE) {
+      const chunk = txs.slice(start, start + CHUNK_SIZE);
+      const pending: ethers.TransactionResponse[] = [];
+
+      // Fire chunk
+      for (const tx of chunk) {
+        pending.push(await this.fireTransaction({ to: tx.to, data: tx.data }));
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      // Wait for chunk confirmations
+      for (const tx of pending) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await tx.wait();
+            hashes.push(tx.hash);
+            break;
+          } catch (err: any) {
+            if (err?.message?.includes('rate limit') || err?.message?.includes('limit reached')) {
+              await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+              continue;
+            }
+            throw err;
+          }
+        }
+      }
+
+      // Pause between chunks
+      if (start + CHUNK_SIZE < txs.length) {
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
-    const hashes: string[] = [];
-    for (const tx of pending) {
-      await tx.wait();
-      hashes.push(tx.hash);
-    }
+
     return hashes;
   }
 
