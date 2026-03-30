@@ -1287,7 +1287,7 @@ local function checkGameEnd(roundData: any)
 	local aliveCount = roundData.aliveCount or 0
 	local totalAgents = roundData.totalAgents or 0
 
-	-- Find player's agent
+	-- Find player's agent (any non-house agent)
 	for _, a in agents do
 		if not a.isHouseAgent then
 			myAgent = a
@@ -1297,19 +1297,28 @@ local function checkGameEnd(roundData: any)
 
 	if not myAgent then return end
 
+	-- Count alive house agents
+	local aliveHouseAgents = 0
+	for _, a in agents do
+		if a.isHouseAgent and a.alive ~= false then
+			aliveHouseAgents += 1
+		end
+	end
+
 	-- LOSS: player agent is dead
 	if myAgent.alive == false then
 		showGameOver(false, 0, myAgent.cyclesSurvived or 0, aliveCount, totalAgents)
 		return
 	end
 
-	-- WIN: player agent is alive and is the only one left (or all house agents dead)
-	if aliveCount <= 1 and myAgent.alive then
+	-- WIN: player agent is alive and ALL house agents are dead
+	if myAgent.alive and aliveHouseAgents == 0 then
 		local yieldWon = myAgent.yieldEarned or 0
 		showGameOver(true, yieldWon, myAgent.cyclesSurvived or 0, aliveCount, totalAgents)
 		return
 	end
 end
+
 
 -- ============================================================
 -- Auto-detect existing agent on load
@@ -1325,6 +1334,7 @@ task.defer(function()
 		local roundResult = GetRoundStatusRF:InvokeServer()
 		if roundResult and type(roundResult) == "table" then
 			updateAgentsPanel(roundResult)
+			checkGameEnd(roundResult)
 		end
 	end
 end)
