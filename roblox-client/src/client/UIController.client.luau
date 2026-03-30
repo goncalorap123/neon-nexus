@@ -840,6 +840,7 @@ local function refreshGameState()
 	if roundResult and type(roundResult) == "table" then
 		updateAgentsPanel(roundResult)
 		generateFeedEvents(roundResult)
+		checkGameEnd(roundResult)
 	end
 
 	-- Fetch agent actions for feed
@@ -1070,6 +1071,245 @@ eventBtn.MouseButton1Click:Connect(function()
 		refreshGameState()
 	end
 end)
+
+-- ============================================================
+-- GAME OVER / WIN Overlays
+-- ============================================================
+
+local gameOverShown = false
+
+-- Full-screen overlay container
+local endOverlay = Instance.new("Frame")
+endOverlay.Name = "EndOverlay"
+endOverlay.Size = UDim2.new(1, 0, 1, 0)
+endOverlay.Position = UDim2.new(0, 0, 0, 0)
+endOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+endOverlay.BackgroundTransparency = 0.3
+endOverlay.BorderSizePixel = 0
+endOverlay.ZIndex = 50
+endOverlay.Visible = false
+endOverlay.Parent = screenGui
+
+local endPanel = Instance.new("Frame")
+endPanel.Name = "EndPanel"
+endPanel.Size = UDim2.new(0, 500, 0, 350)
+endPanel.Position = UDim2.new(0.5, -250, 0.5, -175)
+endPanel.BackgroundColor3 = Color3.fromRGB(12, 12, 25)
+endPanel.BackgroundTransparency = 0.05
+endPanel.BorderSizePixel = 0
+endPanel.ZIndex = 51
+endPanel.Parent = endOverlay
+
+local endPanelCorner = Instance.new("UICorner")
+endPanelCorner.CornerRadius = UDim.new(0, 12)
+endPanelCorner.Parent = endPanel
+
+local endPanelStroke = Instance.new("UIStroke")
+endPanelStroke.Color = Color3.fromRGB(255, 255, 255)
+endPanelStroke.Thickness = 2
+endPanelStroke.Parent = endPanel
+
+-- Big title (LIQUIDATED / WINNER)
+local endTitle = Instance.new("TextLabel")
+endTitle.Name = "EndTitle"
+endTitle.Size = UDim2.new(1, 0, 0, 60)
+endTitle.Position = UDim2.new(0, 0, 0, 25)
+endTitle.BackgroundTransparency = 1
+endTitle.TextColor3 = Color3.fromRGB(255, 50, 50)
+endTitle.TextSize = 48
+endTitle.Font = Enum.Font.GothamBold
+endTitle.Text = "LIQUIDATED"
+endTitle.ZIndex = 52
+endTitle.Parent = endPanel
+
+-- Subtitle
+local endSubtitle = Instance.new("TextLabel")
+endSubtitle.Name = "EndSubtitle"
+endSubtitle.Size = UDim2.new(1, -40, 0, 30)
+endSubtitle.Position = UDim2.new(0, 20, 0, 90)
+endSubtitle.BackgroundTransparency = 1
+endSubtitle.TextColor3 = Color3.fromRGB(180, 180, 210)
+endSubtitle.TextSize = 18
+endSubtitle.Font = Enum.Font.Gotham
+endSubtitle.Text = "Your agent ran out of resources"
+endSubtitle.ZIndex = 52
+endSubtitle.Parent = endPanel
+
+-- Stats display
+local endStats = Instance.new("TextLabel")
+endStats.Name = "EndStats"
+endStats.Size = UDim2.new(1, -40, 0, 90)
+endStats.Position = UDim2.new(0, 20, 0, 130)
+endStats.BackgroundTransparency = 1
+endStats.TextColor3 = Color3.fromRGB(220, 220, 255)
+endStats.TextSize = 16
+endStats.Font = Enum.Font.Gotham
+endStats.Text = ""
+endStats.TextWrapped = true
+endStats.TextYAlignment = Enum.TextYAlignment.Top
+endStats.ZIndex = 52
+endStats.Parent = endPanel
+
+-- Play Again button
+local playAgainBtn = Instance.new("TextButton")
+playAgainBtn.Name = "PlayAgainBtn"
+playAgainBtn.Size = UDim2.new(0, 260, 0, 55)
+playAgainBtn.Position = UDim2.new(0.5, -130, 0, 250)
+playAgainBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 120)
+playAgainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+playAgainBtn.TextSize = 24
+playAgainBtn.Font = Enum.Font.GothamBold
+playAgainBtn.Text = "PLAY AGAIN"
+playAgainBtn.BorderSizePixel = 0
+playAgainBtn.ZIndex = 52
+playAgainBtn.Parent = endPanel
+
+local playAgainCorner = Instance.new("UICorner")
+playAgainCorner.CornerRadius = UDim.new(0, 8)
+playAgainCorner.Parent = playAgainBtn
+
+local playAgainStroke = Instance.new("UIStroke")
+playAgainStroke.Color = Color3.fromRGB(0, 255, 180)
+playAgainStroke.Thickness = 2
+playAgainStroke.Parent = playAgainBtn
+
+local function showGameOver(isWin: boolean, yieldWon: number, cyclesSurvived: number, aliveCount: number, totalAgents: number)
+	if gameOverShown then return end
+	gameOverShown = true
+
+	if isWin then
+		-- WIN
+		endTitle.Text = "WINNER!"
+		endTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
+		endPanelStroke.Color = Color3.fromRGB(255, 215, 0)
+		endSubtitle.Text = "Your agent is the last one standing!"
+		endSubtitle.TextColor3 = Color3.fromRGB(255, 230, 150)
+		endStats.Text = string.format(
+			"Yield Won: $%.2f\nCycles Survived: %d\nAgents Defeated: %d\n\nYour $1,000 deposit is safe.\nAll accumulated yield is yours!",
+			yieldWon, cyclesSurvived, totalAgents - 1
+		)
+		endStats.TextColor3 = Color3.fromRGB(255, 255, 220)
+		playAgainBtn.BackgroundColor3 = Color3.fromRGB(200, 170, 0)
+		playAgainStroke.Color = Color3.fromRGB(255, 215, 0)
+
+		-- Gold screen flash
+		screenFlash(Color3.fromRGB(255, 215, 0), 1.5)
+		addFeedEntry("YOU WON! Yield: $" .. string.format("%.2f", yieldWon), Color3.fromRGB(255, 215, 0))
+	else
+		-- LOSS
+		endTitle.Text = "LIQUIDATED"
+		endTitle.TextColor3 = Color3.fromRGB(255, 50, 50)
+		endPanelStroke.Color = Color3.fromRGB(255, 50, 50)
+		endSubtitle.Text = "Your agent couldn't pay operational costs"
+		endSubtitle.TextColor3 = Color3.fromRGB(200, 150, 150)
+		endStats.Text = string.format(
+			"Cycles Survived: %d\nAgents Remaining: %d / %d\n\nYour $1,000 deposit is safe.\nYield was redistributed to survivors.",
+			cyclesSurvived, aliveCount, totalAgents
+		)
+		endStats.TextColor3 = Color3.fromRGB(220, 200, 200)
+		playAgainBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+		playAgainStroke.Color = Color3.fromRGB(255, 80, 80)
+
+		-- Red screen flash
+		screenFlash(Color3.fromRGB(255, 30, 30), 1.5)
+		addFeedEntry("YOUR AGENT WAS LIQUIDATED", Color3.fromRGB(255, 50, 50))
+	end
+
+	-- Hide HUD, show overlay
+	topBar.Visible = false
+	myAgentFrame.Visible = false
+	controlsFrame.Visible = false
+	endOverlay.Visible = true
+
+	-- Animate title pulsing
+	task.spawn(function()
+		while endOverlay.Visible do
+			for i = 1, 20 do
+				endTitle.TextTransparency = 0.15 * math.sin(i / 20 * math.pi)
+				task.wait(0.05)
+			end
+		end
+	end)
+end
+
+-- Play Again handler
+playAgainBtn.MouseButton1Click:Connect(function()
+	playAgainBtn.Text = "RESETTING..."
+	playAgainBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+
+	-- Call server to reset agent
+	local ResetAgentRF = Remotes:FindFirstChild("ResetAgent") :: RemoteFunction?
+	if ResetAgentRF then
+		pcall(function()
+			ResetAgentRF:InvokeServer()
+		end)
+	end
+
+	-- Reset client state
+	gameOverShown = false
+	agentDeployed = false
+	prevAgentState = {}
+	prevAgentActions = {}
+	feedEntryCount = 0
+
+	-- Clear feed
+	for _, child in feedScroll:GetChildren() do
+		if child:IsA("TextLabel") then child:Destroy() end
+	end
+
+	-- Clear agent color assignments
+	agentColorMap = {}
+	nextColorIdx = 1
+
+	-- Hide overlay and panels, show deploy screen
+	endOverlay.Visible = false
+	topBar.Visible = false
+	myAgentFrame.Visible = false
+	controlsFrame.Visible = false
+	feedFrame.Visible = false
+	agentsPanel.Visible = false
+	deployFrame.Visible = true
+	deployBtn.Text = "DEPLOY AGENT"
+	deployBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 120)
+	deployStatus.Text = ""
+	nameInput.Text = ""
+end)
+
+-- Check for game over / win condition during refresh
+local cachedPlayerName: string? = nil
+
+local function checkGameEnd(roundData: any)
+	if gameOverShown or not agentDeployed then return end
+	if not roundData or not roundData.agents then return end
+
+	local agents = roundData.agents
+	local myAgent: any = nil
+	local aliveCount = roundData.aliveCount or 0
+	local totalAgents = roundData.totalAgents or 0
+
+	-- Find player's agent
+	for _, a in agents do
+		if not a.isHouseAgent then
+			myAgent = a
+			break
+		end
+	end
+
+	if not myAgent then return end
+
+	-- LOSS: player agent is dead
+	if myAgent.alive == false then
+		showGameOver(false, 0, myAgent.cyclesSurvived or 0, aliveCount, totalAgents)
+		return
+	end
+
+	-- WIN: player agent is alive and is the only one left (or all house agents dead)
+	if aliveCount <= 1 and myAgent.alive then
+		local yieldWon = myAgent.yieldEarned or 0
+		showGameOver(true, yieldWon, myAgent.cyclesSurvived or 0, aliveCount, totalAgents)
+		return
+	end
+end
 
 -- ============================================================
 -- Auto-detect existing agent on load

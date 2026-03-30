@@ -496,6 +496,167 @@ for idx, pos in ipairs(pillarPositions) do
 	pillarLight.Parent = pillar
 end
 
+-- ============================================================
+-- Sponsor Billboards (Flow, Filecoin, Protocol Labs)
+-- ============================================================
+
+local sponsorsFolder = Instance.new("Folder")
+sponsorsFolder.Name = "SponsorBillboards"
+sponsorsFolder.Parent = worldFolder
+
+local sponsors = {
+	{
+		name = "FLOW",
+		color = Color3.fromRGB(0, 239, 139),  -- Flow green
+		position = Vector3.new(0, 35, -185),
+		rotation = 0,
+	},
+	{
+		name = "FILECOIN",
+		color = Color3.fromRGB(0, 180, 255),   -- Filecoin blue
+		position = Vector3.new(-185, 35, 0),
+		rotation = 90,
+	},
+	{
+		name = "PROTOCOL LABS",
+		color = Color3.fromRGB(255, 255, 255),  -- Protocol Labs white
+		position = Vector3.new(185, 35, 0),
+		rotation = -90,
+	},
+	-- Duplicates on opposite sides
+	{
+		name = "FLOW",
+		color = Color3.fromRGB(0, 239, 139),
+		position = Vector3.new(0, 35, 185),
+		rotation = 180,
+	},
+	{
+		name = "FILECOIN",
+		color = Color3.fromRGB(0, 180, 255),
+		position = Vector3.new(100, 35, -185),
+		rotation = 0,
+	},
+	{
+		name = "PROTOCOL LABS",
+		color = Color3.fromRGB(255, 255, 255),
+		position = Vector3.new(-100, 35, -185),
+		rotation = 0,
+	},
+}
+
+for idx, sponsor in ipairs(sponsors) do
+	-- Backing panel (dark, semi-transparent)
+	local panel = Instance.new("Part")
+	panel.Name = "SponsorPanel_" .. idx
+	panel.Size = Vector3.new(40, 12, 0.5)
+	panel.Position = sponsor.position
+	panel.Anchored = true
+	panel.CanCollide = false
+	panel.Color = Color3.fromRGB(10, 10, 20)
+	panel.Material = Enum.Material.SmoothPlastic
+	panel.Transparency = 0.3
+	panel.Parent = sponsorsFolder
+
+	-- Rotate to face inward
+	panel.CFrame = CFrame.new(sponsor.position) * CFrame.Angles(0, math.rad(sponsor.rotation), 0)
+
+	local panelCorner = Instance.new("SurfaceLight")
+	panelCorner.Color = sponsor.color
+	panelCorner.Brightness = 0.5
+	panelCorner.Range = 20
+	panelCorner.Face = Enum.NormalId.Front
+	panelCorner.Parent = panel
+
+	-- Neon border frame (top)
+	local borderTop = Instance.new("Part")
+	borderTop.Name = "Border_Top"
+	borderTop.Size = Vector3.new(40, 0.3, 0.6)
+	borderTop.Anchored = true
+	borderTop.CanCollide = false
+	borderTop.Color = sponsor.color
+	borderTop.Material = Enum.Material.Neon
+	borderTop.Parent = sponsorsFolder
+	borderTop.CFrame = panel.CFrame * CFrame.new(0, 6, 0)
+
+	-- Neon border (bottom)
+	local borderBot = Instance.new("Part")
+	borderBot.Name = "Border_Bot"
+	borderBot.Size = Vector3.new(40, 0.3, 0.6)
+	borderBot.Anchored = true
+	borderBot.CanCollide = false
+	borderBot.Color = sponsor.color
+	borderBot.Material = Enum.Material.Neon
+	borderBot.Parent = sponsorsFolder
+	borderBot.CFrame = panel.CFrame * CFrame.new(0, -6, 0)
+
+	-- Neon border (left)
+	local borderL = Instance.new("Part")
+	borderL.Name = "Border_L"
+	borderL.Size = Vector3.new(0.3, 12, 0.6)
+	borderL.Anchored = true
+	borderL.CanCollide = false
+	borderL.Color = sponsor.color
+	borderL.Material = Enum.Material.Neon
+	borderL.Parent = sponsorsFolder
+	borderL.CFrame = panel.CFrame * CFrame.new(-20, 0, 0)
+
+	-- Neon border (right)
+	local borderR = Instance.new("Part")
+	borderR.Name = "Border_R"
+	borderR.Size = Vector3.new(0.3, 12, 0.6)
+	borderR.Anchored = true
+	borderR.CanCollide = false
+	borderR.Color = sponsor.color
+	borderR.Material = Enum.Material.Neon
+	borderR.Parent = sponsorsFolder
+	borderR.CFrame = panel.CFrame * CFrame.new(20, 0, 0)
+
+	-- Glow light behind panel
+	local glow = Instance.new("PointLight")
+	glow.Color = sponsor.color
+	glow.Brightness = 2
+	glow.Range = 50
+	glow.Parent = panel
+
+	-- BillboardGui with sponsor name text (always faces camera)
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "SponsorText"
+	billboard.Size = UDim2.new(0, 500, 0, 120)
+	billboard.StudsOffset = Vector3.new(0, 0, -1)
+	billboard.Adornee = panel
+	billboard.AlwaysOnTop = false
+	billboard.MaxDistance = 300
+	billboard.Parent = panel
+
+	-- "Powered by" subtitle
+	local poweredBy = Instance.new("TextLabel")
+	poweredBy.Name = "PoweredBy"
+	poweredBy.Size = UDim2.new(1, 0, 0.25, 0)
+	poweredBy.Position = UDim2.new(0, 0, 0.05, 0)
+	poweredBy.BackgroundTransparency = 1
+	poweredBy.TextColor3 = Color3.fromRGB(140, 140, 170)
+	poweredBy.TextSize = 18
+	poweredBy.Font = Enum.Font.Gotham
+	poweredBy.Text = "Powered by"
+	poweredBy.Parent = billboard
+
+	-- Main sponsor name
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "SponsorName"
+	nameLabel.Size = UDim2.new(1, 0, 0.55, 0)
+	nameLabel.Position = UDim2.new(0, 0, 0.28, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.TextColor3 = sponsor.color
+	nameLabel.TextStrokeTransparency = 0.2
+	nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	nameLabel.TextSize = 48
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.Text = sponsor.name
+	nameLabel.Parent = billboard
+end
+
+print("[WorldBuilder] Sponsor billboards placed:", #sponsors)
+
 print("[WorldBuilder] City world generation complete!")
 print(string.format("[WorldBuilder] Generated %d building plots, %d resource spawns, %d neon pillars",
 	GRID_SIZE * GRID_SIZE, #resourceTypes * 3, #pillarPositions))

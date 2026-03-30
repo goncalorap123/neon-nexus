@@ -22,6 +22,7 @@ local GetLeaderboardRF = createRemoteFunction("GetLeaderboard")
 local GetAgentHistoryRF = createRemoteFunction("GetAgentHistory")
 local GetRoundStatusRF = createRemoteFunction("GetRoundStatus")
 local GetAgentActionsRF = createRemoteFunction("GetAgentActions")
+local ResetAgentRF = createRemoteFunction("ResetAgent")
 
 -- Map Roblox player -> their agent's playerId (set on deploy)
 local playerAgentIds: { [number]: string } = {}
@@ -125,6 +126,20 @@ GetAgentActionsRF.OnServerInvoke = function(_plr)
 		return data
 	end
 	return {}
+end
+
+-- ResetAgent: remove old agent + respawn house agents for a new round
+ResetAgentRF.OnServerInvoke = function(plr)
+	local playerId = getPlayerId(plr)
+	print("[GameManager] Resetting agent for", plr.Name, "(", playerId, ")")
+
+	-- Remove old player agent
+	HttpBridge.request("POST", "/agent/remove-agent", { playerId = playerId })
+
+	-- Clear mapping so next deploy uses new name
+	playerAgentIds[plr.UserId] = nil
+
+	return true
 end
 
 -- No auto-create on join — player must click Deploy Agent
