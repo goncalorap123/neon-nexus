@@ -82,54 +82,73 @@ export class BlockchainService implements OnModuleInit {
     return this.provider;
   }
 
-  // Send a tx with managed nonce — fires immediately, waits for confirmation
+  // Send a tx with managed nonce — waits for confirmation, retries on rate limit
   private async sendManagedTx(txParams: { to: string; data?: string; value?: bigint }): Promise<{ hash: string }> {
     const prevLock = this.nonceLock;
     let resolve: () => void;
     this.nonceLock = new Promise<void>((r) => { resolve = r; });
     await prevLock;
 
-    try {
-      if (this.managedNonce < 0) {
-        this.managedNonce = await this.signer.getNonce();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (this.managedNonce < 0) {
+          this.managedNonce = await this.signer.getNonce();
+        }
+        const tx = await this.signer.sendTransaction({ ...txParams, nonce: this.managedNonce });
+        this.managedNonce++;
+        resolve!();
+        await tx.wait();
+        return { hash: tx.hash };
+      } catch (err: any) {
+        if (err?.message?.includes('rate limit') || err?.message?.includes('limit reached')) {
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+          continue;
+        }
+        this.managedNonce = -1;
+        resolve!();
+        throw err;
       }
-      const tx = await this.signer.sendTransaction({ ...txParams, nonce: this.managedNonce });
-      this.managedNonce++;
-      resolve!();
-      await tx.wait();
-      return { hash: tx.hash };
-    } catch (err) {
-      this.managedNonce = -1;
-      resolve!();
-      throw err;
     }
+    this.managedNonce = -1;
+    resolve!();
+    throw new Error('Rate limited after 3 retries');
   }
 
   // Fire a tx without waiting for confirmation — returns immediately after send
   // Uses fixed gasLimit to skip estimateGas (which fails on dependent txs)
+  // Includes retry logic for rate limiting
   private async fireTransaction(txParams: { to: string; data?: string; value?: bigint }): Promise<ethers.TransactionResponse> {
     const prevLock = this.nonceLock;
     let resolve: () => void;
     this.nonceLock = new Promise<void>((r) => { resolve = r; });
     await prevLock;
 
-    try {
-      if (this.managedNonce < 0) {
-        this.managedNonce = await this.signer.getNonce();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (this.managedNonce < 0) {
+          this.managedNonce = await this.signer.getNonce();
+        }
+        const tx = await this.signer.sendTransaction({
+          ...txParams,
+          nonce: this.managedNonce,
+          gasLimit: 300_000n,
+        });
+        this.managedNonce++;
+        resolve!();
+        return tx;
+      } catch (err: any) {
+        if (err?.message?.includes('rate limit') || err?.message?.includes('limit reached')) {
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+          continue;
+        }
+        this.managedNonce = -1;
+        resolve!();
+        throw err;
       }
-      const tx = await this.signer.sendTransaction({
-        ...txParams,
-        nonce: this.managedNonce,
-        gasLimit: 300_000n, // skip estimateGas for batch speed
-      });
-      this.managedNonce++;
-      resolve!();
-      return tx;
-    } catch (err) {
-      this.managedNonce = -1;
-      resolve!();
-      throw err;
     }
+    this.managedNonce = -1;
+    resolve!();
+    throw new Error('Rate limited after 3 retries');
   }
 
   // Send a transaction as the contract owner (deploy wallet) — waits for confirmation
@@ -137,11 +156,15 @@ export class BlockchainService implements OnModuleInit {
     return this.sendManagedTx({ to, data });
   }
 
-  // Fire multiple txs in parallel, wait for all confirmations at the end
+  // Fire multiple txs with rate limit spacing, wait for all confirmations at the end
   async ownerSendBatch(txs: Array<{ to: string; data: string }>): Promise<string[]> {
     const pending: ethers.TransactionResponse[] = [];
-    for (const tx of txs) {
-      pending.push(await this.fireTransaction({ to: tx.to, data: tx.data }));
+    for (let i = 0; i < txs.length; i++) {
+      pending.push(await this.fireTransaction({ to: txs[i].to, data: txs[i].data }));
+      // Pace at ~10 tx/s to stay well under 40 req/s limit (each tx = ~3-4 RPC calls)
+      if (i < txs.length - 1) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
     }
     const hashes: string[] = [];
     for (const tx of pending) {

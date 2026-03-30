@@ -1,7 +1,7 @@
 local Config = {}
 
 -- Backend API URL (replace with your actual NestJS backend URL)
-Config.BACKEND_URL = "http://localhost:3000/api"
+Config.BACKEND_URL = "https://neon-nexus-production.up.railway.app/api"
 
 -- API key for authenticating requests (leave empty if not using auth)
 Config.API_KEY = ""
