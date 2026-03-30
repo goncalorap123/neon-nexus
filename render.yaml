@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: neon-nexus-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/src/main.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: PRIVY_APP_ID
+        sync: false
+      - key: PRIVY_APP_SECRET
+        sync: false
+      - key: PRIVY_AUTHORIZATION_PRIVATE_KEY
+        sync: false
+      - key: FLOW_EVM_RPC
+        value: https://testnet.evm.nodes.onflow.org
+      - key: FLOW_CHAIN_ID
+        value: 545
+      - key: NEON_NEXUS_ADDRESS
+        value: "0x6490EFE83A78A093e20284b5ad1edbe6309683e6"
+      - key: RANDOM_EVENTS_ADDRESS
+        value: "0x538c010351De4a7134aa8f02ef10ef930720bE15"
+      - key: AGENT_TRADING_ADDRESS
+        value: "0xEdD36B06A755C82fa66375F197d0Fb1E415290bb"
+      - key: DEPOSIT_TOKEN_ADDRESS
+        value: "0x4Da44ac8f57a6492dD5be9dcD5eEc3DbD11141A6"
+      - key: DEPLOY_WALLET_KEY
+        sync: false
+      - key: OPERATOR_KEYS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
