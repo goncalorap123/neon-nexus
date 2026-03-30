@@ -19,10 +19,10 @@ const BURN_RATES = {
 // Starting resources
 const STARTING = { wood: 50, steel: 50, energy: 80, food: 80 };
 
-// Gathering gives resources to the LOWEST of food/energy
-// Plus a smaller amount to the other
-const GATHER_MAIN = { min: 15, max: 30 };  // to lowest resource
-const GATHER_SIDE = { min: 5, max: 12 };   // to other resource
+// Gather amounts match actual backend: gatherBase +/- 5
+// Conservative=25, Balanced=20, Aggressive=15
+// Agent gathers ONE resource per cycle (the lowest of food/energy)
+const GATHER_BY_STRATEGY = { 0: 25, 1: 20, 2: 15 };
 
 // Strategy distribution for 6 agents
 const AGENT_STRATEGIES = [0, 0, 1, 1, 2, 2]; // 2 safe, 2 balanced, 2 aggressive
@@ -75,16 +75,16 @@ function simulateRound(gatherChance: number, seed?: number): { deadByCycle: numb
       agent.food -= burn.food;
       agent.energy -= burn.energy;
 
-      // AI gathers — adds to lowest resource (main) + a bit to the other (side)
+      // AI gathers — adds to the LOWEST resource only (one resource per cycle)
       if (pseudoRandom() < gatherChance) {
-        const mainAmt = GATHER_MAIN.min + Math.floor(pseudoRandom() * (GATHER_MAIN.max - GATHER_MAIN.min + 1));
-        const sideAmt = GATHER_SIDE.min + Math.floor(pseudoRandom() * (GATHER_SIDE.max - GATHER_SIDE.min + 1));
+        const base = GATHER_BY_STRATEGY[agent.strategy as keyof typeof GATHER_BY_STRATEGY] ?? 20;
+        const variance = Math.floor(pseudoRandom() * 11) - 5;
+        const amount = Math.max(10, base + variance);
+        // Only gather one resource — the lowest
         if (agent.food <= agent.energy) {
-          agent.food += mainAmt;
-          agent.energy += sideAmt;
+          agent.food += amount;
         } else {
-          agent.energy += mainAmt;
-          agent.food += sideAmt;
+          agent.energy += amount;
         }
       }
     }
@@ -126,13 +126,13 @@ describe('Survival Simulation', () => {
     expect(avgDeadBy5).toBeGreaterThanOrEqual(4);
   });
 
-  it('should still kill agents even with 50% gather chance', () => {
+  it('should still kill agents even with 80% gather chance (realistic AI)', () => {
     const runs = 100;
     let totalDeadBy5 = 0;
     let totalSurvivors = 0;
 
     for (let i = 0; i < runs; i++) {
-      const result = simulateRound(0.5, i * 251);
+      const result = simulateRound(0.8, i * 251);
       const cumDeaths = result.deadByCycle.reduce((acc, d, idx) => {
         acc.push((acc[idx - 1] ?? 0) + d);
         return acc;
@@ -181,10 +181,10 @@ describe('Survival Simulation', () => {
           a.food -= burn.food;
           a.energy -= burn.energy;
           if (pseudoRandom() < 0.3) {
-            const mainAmt = GATHER_MAIN.min + Math.floor(pseudoRandom() * (GATHER_MAIN.max - GATHER_MAIN.min + 1));
-            const sideAmt = GATHER_SIDE.min + Math.floor(pseudoRandom() * (GATHER_SIDE.max - GATHER_SIDE.min + 1));
-            if (a.food <= a.energy) { a.food += mainAmt; a.energy += sideAmt; }
-            else { a.energy += mainAmt; a.food += sideAmt; }
+            const base2 = GATHER_BY_STRATEGY[a.strategy as keyof typeof GATHER_BY_STRATEGY] ?? 20;
+            const var2 = Math.floor(pseudoRandom() * 11) - 5;
+            const amt2 = Math.max(10, base2 + var2);
+            if (a.food <= a.energy) a.food += amt2; else a.energy += amt2;
           }
         }
       }
@@ -207,19 +207,62 @@ describe('Survival Simulation', () => {
     expect(earlyCounts[2]).toBeGreaterThan(earlyCounts[0]);
   });
 
-  it('print full sample game timeline', () => {
-    const result = simulateRound(0.4, 42);
-    let cumDead = 0;
-    console.log('\n--- SAMPLE GAME TIMELINE ---');
-    for (let c = 0; c < result.deadByCycle.length; c++) {
-      cumDead += result.deadByCycle[c];
-      const alive = 6 - cumDead;
-      const deathStr = result.deadByCycle[c] > 0 ? ` (${result.deadByCycle[c]} eliminated!)` : '';
-      console.log(`Cycle ${c + 1}: ${alive} alive${deathStr}`);
-      if (alive <= 1) {
-        console.log(`GAME OVER — winner found at cycle ${c + 1}`);
-        break;
+  it('print full sample games at different gather rates', () => {
+    for (const rate of [0, 0.5, 0.8, 1.0]) {
+      console.log(`\n--- GAME (gather=${rate * 100}%) ---`);
+      const result = simulateRound(rate, 42);
+      let cumDead = 0;
+      for (let c = 0; c < result.deadByCycle.length; c++) {
+        cumDead += result.deadByCycle[c];
+        const alive = 6 - cumDead;
+        const deathStr = result.deadByCycle[c] > 0 ? ` (${result.deadByCycle[c]} eliminated!)` : '';
+        console.log(`  Cycle ${c + 1}: ${alive} alive${deathStr}`);
+        if (alive <= 1) {
+          console.log(`  GAME OVER at cycle ${c + 1}`);
+          break;
+        }
       }
     }
+  });
+
+  it('run 500 games at 80% gather and report distribution', () => {
+    const runs = 500;
+    const gameEndCycles: number[] = [];
+
+    for (let i = 0; i < runs; i++) {
+      const result = simulateRound(0.8, i * 71);
+      let cumDead = 0;
+      for (let c = 0; c < result.deadByCycle.length; c++) {
+        cumDead += result.deadByCycle[c];
+        if (6 - cumDead <= 1) {
+          gameEndCycles.push(c + 1);
+          break;
+        }
+      }
+      if (6 - cumDead > 1) gameEndCycles.push(10); // didn't finish
+    }
+
+    const avg = gameEndCycles.reduce((a, b) => a + b, 0) / gameEndCycles.length;
+    const min = Math.min(...gameEndCycles);
+    const max = Math.max(...gameEndCycles);
+
+    // Distribution
+    const dist: Record<number, number> = {};
+    for (const c of gameEndCycles) {
+      dist[c] = (dist[c] || 0) + 1;
+    }
+
+    console.log(`\n--- 500 GAMES @ 80% gather ---`);
+    console.log(`Game length: avg=${avg.toFixed(1)} min=${min} max=${max}`);
+    for (let c = 1; c <= 10; c++) {
+      if (dist[c]) {
+        const bar = '#'.repeat(Math.round(dist[c] / 5));
+        console.log(`  Cycle ${c}: ${dist[c]} games (${(dist[c] / runs * 100).toFixed(0)}%) ${bar}`);
+      }
+    }
+
+    // Games should end between cycle 3-7 mostly
+    expect(avg).toBeGreaterThanOrEqual(3);
+    expect(avg).toBeLessThanOrEqual(7);
   });
 });

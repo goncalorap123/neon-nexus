@@ -362,12 +362,6 @@ export class SettlementService {
   ) {
     switch (decision.action) {
       case 'gather': {
-        const yieldEarned = BigInt(onChain.yieldEarned);
-        if (yieldEarned === 0n) {
-          this.logger.log(`Agent ${agent.playerId}: no yield to convert to resources, skipping gather`);
-          break;
-        }
-
         // Determine which resource to gather
         let resourceType = decision.details.resourceToGather;
         if (resourceType === undefined || resourceType < 0 || resourceType > 3) {
@@ -386,21 +380,21 @@ export class SettlementService {
           }
         }
 
-        // Mint resources based on yield earned
-        const weights = RESOURCE_WEIGHTS[strategyType] ?? RESOURCE_WEIGHTS[1];
-        const totalWeight = weights.reduce((a, b) => a + b, 0);
-        const resourceAmount = (yieldEarned * BigInt(weights[resourceType])) / BigInt(totalWeight * 100);
-        if (resourceAmount > 0n) {
-          const mintData = this.blockchainService.encodeMintResources(
-            agent.address,
-            resourceType,
-            resourceAmount,
-          );
-          await this.blockchainService.ownerSendTransaction(
-            this.blockchainService.getAgentTradingAddress(),
-            mintData,
-          );
-        }
+        // Fixed gather amount: 15-25 units (matches simulation tuning)
+        // Conservative gathers slightly more (efficient ops), aggressive less (wasteful)
+        const gatherBase = [25, 20, 15][strategyType] ?? 20;
+        const gatherVariance = Math.floor(Math.random() * 11) - 5; // -5 to +5
+        const resourceAmount = BigInt(Math.max(10, gatherBase + gatherVariance));
+
+        const mintData = this.blockchainService.encodeMintResources(
+          agent.address,
+          resourceType,
+          resourceAmount,
+        );
+        await this.blockchainService.ownerSendTransaction(
+          this.blockchainService.getAgentTradingAddress(),
+          mintData,
+        );
 
         await this.txLogService.log(agent.playerId, agent.address, 'resources_gathered', '', {
           resourceType,
