@@ -78,12 +78,43 @@ end
 -- Track known agents and their corresponding 3D models
 local agentModels: { [string]: Model } = {}
 
--- Strategy color mapping
+-- Strategy color mapping (still used for strategy indicator text)
 local strategyColors = {
 	[0] = Color3.fromRGB(40, 180, 60),   -- Conservative: green
 	[1] = Color3.fromRGB(220, 200, 40),  -- Balanced: yellow
 	[2] = Color3.fromRGB(210, 50, 50),   -- Aggressive: red
 }
+
+-- Distinct color palette for agents (up to 8 unique colors)
+local agentColorPalette = {
+	Color3.fromRGB(0, 200, 255),    -- cyan
+	Color3.fromRGB(255, 60, 180),   -- pink/magenta
+	Color3.fromRGB(120, 50, 255),   -- purple
+	Color3.fromRGB(0, 255, 130),    -- neon green
+	Color3.fromRGB(255, 150, 0),    -- orange
+	Color3.fromRGB(255, 255, 50),   -- yellow
+	Color3.fromRGB(255, 80, 80),    -- red
+	Color3.fromRGB(80, 180, 255),   -- light blue
+}
+
+-- Track assigned colors per agent (persistent across updates)
+local agentAssignedColors: { [string]: number } = {}
+local nextColorIndex = 1
+
+local function getAgentColorIndex(agentId: string): number
+	if agentAssignedColors[agentId] then
+		return agentAssignedColors[agentId]
+	end
+	local idx = nextColorIndex
+	agentAssignedColors[agentId] = idx
+	nextColorIndex = (nextColorIndex % #agentColorPalette) + 1
+	return idx
+end
+
+local function getAgentColor(agentId: string): Color3
+	local idx = getAgentColorIndex(agentId)
+	return agentColorPalette[idx]
+end
 
 local strategyNames = {
 	[0] = "Conservative",
@@ -582,9 +613,10 @@ end
 -- Build a humanoid-rig NPC model from Parts
 local function createNPCModel(agentData: any): Model
 	local name = agentData.name or agentData.id or "Agent"
+	local agentId = agentData.id or "unknown"
 	local strategy = agentData.strategy or 1
 	local score = agentData.score or 0
-	local color = strategyColors[strategy] or strategyColors[1]
+	local color = getAgentColor(agentId)
 	local limbColor = darkenColor(color)
 
 	local model = Instance.new("Model")
@@ -726,7 +758,8 @@ local function createNPCModel(agentData: any): Model
 	infoLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	infoLabel.TextSize = 13
 	infoLabel.Font = Enum.Font.Gotham
-	infoLabel.Text = (strategyNames[strategy] or "Unknown") .. " | Score: " .. tostring(score)
+	infoLabel.Text = (strategyNames[strategy] or "Unknown") .. " | $" .. tostring(score)
+	infoLabel.TextColor3 = color
 	infoLabel.Parent = billboard
 
 	model.Parent = agentFolder
@@ -785,9 +818,9 @@ local function updateAgentModel(model: Model, agentData: any)
 	local strategy = agentData.strategy or 1
 	local score = agentData.score or 0
 	local name = agentData.name or agentData.id or "Agent"
-	local color = strategyColors[strategy] or strategyColors[1]
-	local limbColor = darkenColor(color)
 	local agentId = agentData.id or "unknown"
+	local color = getAgentColor(agentId)
+	local limbColor = darkenColor(color)
 
 	-- Update torso color
 	local torso = model:FindFirstChild("Torso") :: Part?

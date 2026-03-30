@@ -566,49 +566,178 @@ end
 print("[WorldBuilder] Holographic particles spawned")
 
 -- ============================================================
--- D. Building Evolution System
+-- D. Agent Building Ownership + Evolution System
 -- ============================================================
 
 local HttpBridge = require(script.Parent:WaitForChild("HttpBridge"))
-local milestonesReached = {}
-local milestones = { 1000, 5000, 10000, 50000, 100000 }
+
+-- Same color palette as AgentSimulator (must stay in sync)
+local agentColorPalette = {
+	Color3.fromRGB(0, 200, 255),    -- cyan
+	Color3.fromRGB(255, 60, 180),   -- pink/magenta
+	Color3.fromRGB(120, 50, 255),   -- purple
+	Color3.fromRGB(0, 255, 130),    -- neon green
+	Color3.fromRGB(255, 150, 0),    -- orange
+	Color3.fromRGB(255, 255, 50),   -- yellow
+	Color3.fromRGB(255, 80, 80),    -- red
+	Color3.fromRGB(80, 180, 255),   -- light blue
+}
+
+-- Collect all buildings into a flat list
+local allBuildings: { Part } = {}
+for _, child in buildingsFolder:GetChildren() do
+	if child:IsA("Part") and string.find(child.Name, "Building") then
+		table.insert(allBuildings, child)
+	end
+end
+
+-- Track which buildings are assigned to which agent
+local agentBuildings: { [string]: { Part } } = {}
+local agentColorMap: { [string]: number } = {}
+local nextAgentColorIdx = 1
+
+-- Assign buildings evenly across agents and color them
+local function assignBuildingsToAgents(agentIds: { string })
+	if #agentIds == 0 or #allBuildings == 0 then return end
+
+	-- Assign color indices to new agents
+	for _, agentId in agentIds do
+		if not agentColorMap[agentId] then
+			agentColorMap[agentId] = nextAgentColorIdx
+			nextAgentColorIdx = (nextAgentColorIdx % #agentColorPalette) + 1
+		end
+	end
+
+	-- Distribute buildings evenly
+	local buildingsPerAgent = math.floor(#allBuildings / #agentIds)
+	local remainder = #allBuildings % #agentIds
+	local buildingIdx = 1
+
+	for i, agentId in agentIds do
+		local count = buildingsPerAgent + (if i <= remainder then 1 else 0)
+		agentBuildings[agentId] = {}
+		local agentColor = agentColorPalette[agentColorMap[agentId]] or agentColorPalette[1]
+		-- Darker version of agent color for building body
+		local buildingColor = Color3.new(
+			math.max(0, agentColor.R * 0.15),
+			math.max(0, agentColor.G * 0.15),
+			math.max(0, agentColor.B * 0.15)
+		)
+
+		for _ = 1, count do
+			if buildingIdx > #allBuildings then break end
+			local bldg = allBuildings[buildingIdx]
+			buildingIdx += 1
+			table.insert(agentBuildings[agentId], bldg)
+
+			-- Tween building to agent's dark color
+			TweenService:Create(bldg, TweenInfo.new(1.5, Enum.EasingStyle.Quad), {
+				Color = buildingColor,
+			}):Play()
+
+			-- Update neon strips and lights on this building to agent color
+			local bldgName = bldg.Name
+			local row, col, idx = string.match(bldgName, "Building_R(%d+)_C(%d+)_(%d+)")
+			if row then
+				for _, sibling in buildingsFolder:GetChildren() do
+					if sibling:IsA("Part") and string.find(sibling.Name, "NeonStrip") then
+						-- Match neon strips near this building's position
+						local dist = (sibling.Position - bldg.Position).Magnitude
+						if dist < 30 then
+							TweenService:Create(sibling, TweenInfo.new(1.5, Enum.EasingStyle.Quad), {
+								Color = agentColor,
+							}):Play()
+						end
+					end
+				end
+			end
+
+			-- Update lights on the building
+			for _, child in bldg:GetChildren() do
+				if child:IsA("PointLight") or child:IsA("SurfaceLight") then
+					child.Color = agentColor
+				end
+			end
+
+			-- Update beacon if nearby
+			for _, sibling in buildingsFolder:GetChildren() do
+				if sibling.Name == "Beacon" then
+					local dist = (Vector3.new(sibling.Position.X, 0, sibling.Position.Z) - Vector3.new(bldg.Position.X, 0, bldg.Position.Z)).Magnitude
+					if dist < 5 then
+						TweenService:Create(sibling, TweenInfo.new(1.5, Enum.EasingStyle.Quad), {
+							Color = agentColor,
+						}):Play()
+						local beaconLight = sibling:FindFirstChildOfClass("PointLight")
+						if beaconLight then
+							beaconLight.Color = agentColor
+						end
+					end
+				end
+			end
+		end
+	end
+
+	print("[WorldBuilder] Assigned", #allBuildings, "buildings across", #agentIds, "agents")
+end
+
+-- Grow buildings for an agent when they hit milestones
+local agentMilestones: { [string]: { [number]: boolean } } = {}
+local milestones = { 500, 2000, 5000, 10000, 50000 }
+
+local function evolveAgentBuildings(agentId: string, score: number)
+	if not agentMilestones[agentId] then
+		agentMilestones[agentId] = {}
+	end
+	if not agentBuildings[agentId] then return end
+
+	for i, threshold in milestones do
+		if score >= threshold and not agentMilestones[agentId][i] then
+			agentMilestones[agentId][i] = true
+			-- Grow one of this agent's buildings
+			local buildings = agentBuildings[agentId]
+			if #buildings > 0 then
+				local bldg = buildings[math.random(1, #buildings)]
+				local growAmount = 5 + math.random(0, 8)
+				TweenService:Create(bldg, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = bldg.Size + Vector3.new(0, growAmount, 0),
+					Position = bldg.Position + Vector3.new(0, growAmount / 2, 0),
+				}):Play()
+				print("[WorldBuilder] Agent", agentId, "milestone", threshold, "- building grew!")
+			end
+		end
+	end
+end
+
+-- Polling loop: assign buildings on first data, then evolve
+local buildingsAssigned = false
 
 task.spawn(function()
 	while true do
-		task.wait(60)
+		task.wait(15)
 		local success, leaderboard = HttpBridge.getLeaderboard()
-		if success and leaderboard and type(leaderboard) == "table" then
-			local totalScore = 0
-			for _, agent in leaderboard do
-				totalScore += (agent.score or 0)
+		if success and leaderboard and type(leaderboard) == "table" and #leaderboard > 0 then
+			-- First time: assign buildings to agents
+			if not buildingsAssigned then
+				local agentIds = {}
+				for _, agent in leaderboard do
+					if agent.alive ~= false then
+						table.insert(agentIds, agent.playerId)
+					end
+				end
+				if #agentIds > 0 then
+					assignBuildingsToAgents(agentIds)
+					buildingsAssigned = true
+				end
 			end
 
-			for i, threshold in milestones do
-				if totalScore >= threshold and not milestonesReached[i] then
-					milestonesReached[i] = true
-					print("[WorldBuilder] Milestone reached:", threshold, "- evolving buildings!")
-					-- Collect buildings
-					local buildings = {}
-					for _, child in buildingsFolder:GetChildren() do
-						if child:IsA("Part") and string.find(child.Name, "Building") then
-							table.insert(buildings, child)
-						end
-					end
-					-- Pick up to 3 random buildings to grow
-					for j = 1, math.min(3, #buildings) do
-						local bldg = buildings[math.random(1, #buildings)]
-						local growAmount = 5 + math.random(0, 10)
-						local newSize = bldg.Size + Vector3.new(0, growAmount, 0)
-						local newPos = bldg.Position + Vector3.new(0, growAmount / 2, 0)
-						TweenService:Create(bldg, TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-							Size = newSize,
-							Position = newPos,
-						}):Play()
-					end
+			-- Evolve buildings based on scores
+			for _, agent in leaderboard do
+				if agent.alive ~= false then
+					evolveAgentBuildings(agent.playerId, agent.score or 0)
 				end
 			end
 		end
 	end
 end)
 
-print("[WorldBuilder] Building evolution system initialized")
+print("[WorldBuilder] Agent building ownership system initialized")
