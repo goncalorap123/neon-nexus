@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ethers } from 'ethers';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PrivyService } from '../privy/privy.service';
@@ -62,8 +63,23 @@ export class AgentService {
     });
     await this.agentRepo.save(agent);
 
-    // Seed starting resources
-    await this.seedResources(wallet.address);
+    // Seed resources + fund deposit in one batch
+    const depositAmt = 10_000_000n;
+    const config = getEnvConfig();
+    const deployAddr = new ethers.Wallet(config.DEPLOY_WALLET_KEY).address;
+    const neonNexus = this.blockchainService.getNeonNexusAddress();
+    const depositToken = this.blockchainService.getDepositTokenAddress();
+    const agentTrading = this.blockchainService.getAgentTradingAddress();
+
+    await this.blockchainService.ownerSendBatch([
+      { to: agentTrading, data: this.blockchainService.encodeMintResources(wallet.address, 0, STARTING_RESOURCES.wood) },
+      { to: agentTrading, data: this.blockchainService.encodeMintResources(wallet.address, 1, STARTING_RESOURCES.steel) },
+      { to: agentTrading, data: this.blockchainService.encodeMintResources(wallet.address, 2, STARTING_RESOURCES.energy) },
+      { to: agentTrading, data: this.blockchainService.encodeMintResources(wallet.address, 3, STARTING_RESOURCES.food) },
+      { to: depositToken, data: this.blockchainService.encodeMintToken(deployAddr, depositAmt) },
+      { to: depositToken, data: this.blockchainService.encodeApproveToken(neonNexus, depositAmt) },
+      { to: neonNexus, data: this.blockchainService.encodeDeposit(wallet.address, depositAmt) },
+    ]);
 
     // Spawn house agents if this is the first player agent
     const houseAgents = await this.agentRepo.find({ where: { isHouseAgent: true } });
@@ -141,6 +157,38 @@ export class AgentService {
     return { walletId: agent.walletId, address: agent.address };
   }
 
+  // Mint deposit tokens to the deploy wallet, approve NeonNexus, then deposit for an agent
+  async fundAndDeposit(address: string, amount: bigint): Promise<void> {
+    const config = getEnvConfig();
+    const deployWalletAddress = new ethers.Wallet(config.DEPLOY_WALLET_KEY).address;
+
+    // 1. Mint tokens to the deploy wallet
+    const mintData = this.blockchainService.encodeMintToken(deployWalletAddress, amount);
+    await this.blockchainService.ownerSendTransaction(
+      this.blockchainService.getDepositTokenAddress(),
+      mintData,
+    );
+
+    // 2. Approve NeonNexus to spend
+    const approveData = this.blockchainService.encodeApproveToken(
+      this.blockchainService.getNeonNexusAddress(),
+      amount,
+    );
+    await this.blockchainService.ownerSendTransaction(
+      this.blockchainService.getDepositTokenAddress(),
+      approveData,
+    );
+
+    // 3. Deposit for the agent
+    const depData = this.blockchainService.encodeDeposit(address, amount);
+    await this.blockchainService.ownerSendTransaction(
+      this.blockchainService.getNeonNexusAddress(),
+      depData,
+    );
+
+    this.logger.log(`Funded and deposited ${amount} tokens for ${address}`);
+  }
+
   async removeAgent(playerId: string): Promise<void> {
     await this.agentRepo.delete({ playerId });
   }
@@ -185,59 +233,74 @@ export class AgentService {
     }
   }
 
-  // Create house-owned AI agents for a round
+  // Create house-owned AI agents for a round — batched for speed
   async createHouseAgents(count: number, depositAmount: bigint): Promise<AgentEntity[]> {
+    this.logger.log(`Creating ${count} house agents (batched)...`);
+    const depositAmt = 10_000_000n; // $10 in 6 decimal base units
+    const config = getEnvConfig();
+    const deployAddr = new ethers.Wallet(config.DEPLOY_WALLET_KEY).address;
+
+    // 1. Create all Privy wallets in parallel
+    const walletPromises = Array.from({ length: count }, () => this.privyService.createWallet());
+    const wallets = await Promise.all(walletPromises);
+    this.logger.log(`Created ${wallets.length} Privy wallets`);
+
+    // 2. Prepare all on-chain txs for all agents in one batch
+    const strategies = wallets.map(() => Math.floor(Math.random() * 3));
+    const allTxs: Array<{ to: string; data: string }> = [];
+    const neonNexus = this.blockchainService.getNeonNexusAddress();
+    const agentTrading = this.blockchainService.getAgentTradingAddress();
+    const depositToken = this.blockchainService.getDepositTokenAddress();
+
+    for (let i = 0; i < wallets.length; i++) {
+      const addr = wallets[i].address;
+      const strategy = strategies[i];
+
+      // Register agent
+      allTxs.push({ to: neonNexus, data: this.blockchainService.encodeRegisterAgent(addr, addr) });
+      // Set strategy
+      allTxs.push({ to: neonNexus, data: this.blockchainService.encodeSetStrategy(addr, strategy) });
+      // Mint deposit tokens to deploy wallet
+      allTxs.push({ to: depositToken, data: this.blockchainService.encodeMintToken(deployAddr, depositAmt) });
+      // Approve NeonNexus to spend
+      allTxs.push({ to: depositToken, data: this.blockchainService.encodeApproveToken(neonNexus, depositAmt) });
+      // Deposit for agent
+      allTxs.push({ to: neonNexus, data: this.blockchainService.encodeDeposit(addr, depositAmt) });
+      // Mint starting resources (wood=0, steel=1, energy=2, food=3)
+      allTxs.push({ to: agentTrading, data: this.blockchainService.encodeMintResources(addr, 0, STARTING_RESOURCES.wood) });
+      allTxs.push({ to: agentTrading, data: this.blockchainService.encodeMintResources(addr, 1, STARTING_RESOURCES.steel) });
+      allTxs.push({ to: agentTrading, data: this.blockchainService.encodeMintResources(addr, 2, STARTING_RESOURCES.energy) });
+      allTxs.push({ to: agentTrading, data: this.blockchainService.encodeMintResources(addr, 3, STARTING_RESOURCES.food) });
+    }
+
+    // 3. Fire all txs with nonce management, wait for all at end
+    this.logger.log(`Sending ${allTxs.length} txs in batch...`);
+    await this.blockchainService.ownerSendBatch(allTxs);
+    this.logger.log(`All ${allTxs.length} txs confirmed`);
+
+    // 4. Fund wallets with FLOW in parallel (simple transfers)
+    const fundPromises = wallets.map((w) => this.blockchainService.fundWallet(w.address, '10'));
+    await Promise.all(fundPromises);
+
+    // 5. Save to DB
     const created: AgentEntity[] = [];
-
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < wallets.length; i++) {
       const playerId = `house-agent-${Date.now()}-${i}`;
-      const wallet = await this.privyService.createWallet();
-
-      // Register on-chain
-      const regData = this.blockchainService.encodeRegisterAgent(wallet.address, wallet.address);
-      await this.blockchainService.ownerSendTransaction(
-        this.blockchainService.getNeonNexusAddress(),
-        regData,
-      );
-
-      // Fund with FLOW
-      await this.blockchainService.fundWallet(wallet.address, '10');
-
-      // Random strategy (0-2)
-      const strategy = Math.floor(Math.random() * 3);
-      const stratData = this.blockchainService.encodeSetStrategy(wallet.address, strategy);
-      await this.blockchainService.ownerSendTransaction(
-        this.blockchainService.getNeonNexusAddress(),
-        stratData,
-      );
-
-      // Deposit stablecoins if amount > 0
-      if (depositAmount > 0n) {
-        const depData = this.blockchainService.encodeDeposit(wallet.address, depositAmount);
-        await this.blockchainService.ownerSendTransaction(
-          this.blockchainService.getNeonNexusAddress(),
-          depData,
-        );
-      }
-
       const agent = this.agentRepo.create({
         playerId,
-        walletId: wallet.id,
-        address: wallet.address,
-        strategyType: strategy,
+        walletId: wallets[i].id,
+        address: wallets[i].address,
+        strategyType: strategies[i],
         isHouseAgent: true,
       });
       await this.agentRepo.save(agent);
 
-      // Seed starting resources
-      await this.seedResources(wallet.address);
-
-      await this.txLogService.log(playerId, wallet.address, 'house_agent_created', '', {
-        strategy,
-        strategyName: ['Conservative', 'Balanced', 'Aggressive'][strategy],
+      await this.txLogService.log(playerId, wallets[i].address, 'house_agent_created', '', {
+        strategy: strategies[i],
+        strategyName: ['Conservative', 'Balanced', 'Aggressive'][strategies[i]],
       });
 
-      this.logger.log(`Created house agent ${playerId} with strategy ${['Conservative', 'Balanced', 'Aggressive'][strategy]}`);
+      this.logger.log(`Created house agent ${playerId} (${['Conservative', 'Balanced', 'Aggressive'][strategies[i]]})`);
       created.push(agent);
     }
 

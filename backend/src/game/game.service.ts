@@ -6,9 +6,9 @@ import { TransactionLogService } from '../database/transaction-log.service';
 
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
 const BURN_RATES: Record<number, { food: number; energy: number }> = {
-  0: { food: 2, energy: 1 },
-  1: { food: 3, energy: 2 },
-  2: { food: 5, energy: 4 },
+  0: { food: 10, energy: 8 },
+  1: { food: 15, energy: 12 },
+  2: { food: 25, energy: 20 },
 };
 
 @Injectable()
@@ -58,6 +58,12 @@ export class GameService {
     const strategyType = Number(agent.onChain?.strategyType ?? 1);
     const burnRate = BURN_RATES[strategyType] ?? BURN_RATES[1];
     const aliveCount = await this.agentService.getAliveCount();
+
+    // Format on-chain values for display (6 decimal token)
+    if (agent.onChain) {
+      agent.onChain.deposit = +(Number(agent.onChain.deposit) / 1_000_000).toFixed(2);
+      agent.onChain.yieldEarned = +(Number(agent.onChain.yieldEarned) / 1_000_000).toFixed(2);
+    }
 
     return {
       player: agent,
@@ -208,30 +214,62 @@ export class GameService {
     const allAgents = await this.agentService.getAllAgentsIncludingEliminated();
     const aliveCount = allAgents.filter((a) => a.active && !a.eliminated).length;
 
-    // Calculate total yield pool
+    // Build detailed agent list with on-chain data
     let yieldPool = 0;
-    for (const agent of allAgents) {
-      try {
-        const onChain = await this.blockchainService.getAgent(agent.address);
-        yieldPool += Number(onChain?.yieldEarned ?? 0);
-      } catch {}
-    }
+    const agentsDetail = await Promise.all(
+      allAgents.map(async (dbAgent) => {
+        let deposit = 0, yieldEarned = 0, strategyType = 1;
+        let wood = 0, steel = 0, energy = 0, food = 0;
+        try {
+          const onChain = await this.blockchainService.getAgent(dbAgent.address);
+          deposit = Number(onChain?.deposit ?? 0);
+          yieldEarned = Number(onChain?.yieldEarned ?? 0);
+          strategyType = Number(onChain?.strategyType ?? 1);
+          yieldPool += yieldEarned;
+        } catch {}
+        try {
+          wood = Number(await this.blockchainService.getAgentResources(dbAgent.address, 0));
+          steel = Number(await this.blockchainService.getAgentResources(dbAgent.address, 1));
+          energy = Number(await this.blockchainService.getAgentResources(dbAgent.address, 2));
+          food = Number(await this.blockchainService.getAgentResources(dbAgent.address, 3));
+        } catch {}
 
-    const eliminatedAgents = allAgents
-      .filter((a) => a.eliminated)
-      .map((a) => ({
-        playerId: a.playerId,
-        address: a.address,
-        isHouseAgent: a.isHouseAgent,
-        eliminatedAt: a.eliminatedAt,
-        cyclesSurvived: a.cyclesSurvived,
-      }));
+        const burnRate = BURN_RATES[strategyType] ?? BURN_RATES[1];
+        const alive = dbAgent.active && !dbAgent.eliminated;
+
+        return {
+          playerId: dbAgent.playerId,
+          address: dbAgent.address,
+          isHouseAgent: dbAgent.isHouseAgent,
+          alive,
+          eliminated: dbAgent.eliminated,
+          deposit: +(deposit / 1_000_000).toFixed(2),
+          yieldEarned: +(yieldEarned / 1_000_000).toFixed(2),
+          strategyType,
+          resources: { wood, steel, energy, food },
+          burnRate: { food: burnRate.food, energy: burnRate.energy },
+          cyclesSurvived: dbAgent.cyclesSurvived,
+        };
+      }),
+    );
+
+    // Sort alive-first, then by yield descending
+    agentsDetail.sort((a, b) => {
+      if (a.alive !== b.alive) return a.alive ? -1 : 1;
+      return b.yieldEarned - a.yieldEarned;
+    });
+
+    // Cycle timing: cycles run every 5 minutes
+    const now = Math.floor(Date.now() / 1000);
+    const cycleInterval = 300; // 5 minutes in seconds
+    const secondsUntilNextCycle = cycleInterval - (now % cycleInterval);
 
     return {
       aliveCount,
       totalAgents: allAgents.length,
-      yieldPool,
-      eliminatedAgents,
+      yieldPool: +(yieldPool / 1_000_000).toFixed(2),
+      secondsUntilNextCycle,
+      agents: agentsDetail,
     };
   }
 }

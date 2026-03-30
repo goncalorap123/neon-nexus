@@ -611,11 +611,24 @@ local function playCelebration(model: Model)
 end
 
 -- Build a humanoid-rig NPC model from Parts
+local function shortenAgentName(name: string): string
+	-- Turn "house-agent-1774832647582-0" into "Agent-0"
+	local houseIdx = string.match(name, "house%-agent%-.+%-(%d+)$")
+	if houseIdx then
+		return "Agent-" .. houseIdx
+	end
+	if #name > 14 then
+		return string.sub(name, 1, 12) .. ".."
+	end
+	return name
+end
+
 local function createNPCModel(agentData: any): Model
-	local name = agentData.name or agentData.id or "Agent"
+	local name = shortenAgentName(agentData.name or agentData.id or "Agent")
 	local agentId = agentData.id or "unknown"
 	local strategy = agentData.strategy or 1
 	local score = agentData.score or 0
+	local yieldEarned = agentData.yieldEarned or 0
 	local color = getAgentColor(agentId)
 	local limbColor = darkenColor(color)
 
@@ -758,7 +771,7 @@ local function createNPCModel(agentData: any): Model
 	infoLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	infoLabel.TextSize = 13
 	infoLabel.Font = Enum.Font.Gotham
-	infoLabel.Text = (strategyNames[strategy] or "Unknown") .. " | $" .. tostring(score)
+	infoLabel.Text = (strategyNames[strategy] or "?") .. " | Yield: $" .. tostring(yieldEarned)
 	infoLabel.TextColor3 = color
 	infoLabel.Parent = billboard
 
@@ -817,7 +830,8 @@ end
 local function updateAgentModel(model: Model, agentData: any)
 	local strategy = agentData.strategy or 1
 	local score = agentData.score or 0
-	local name = agentData.name or agentData.id or "Agent"
+	local yieldEarned = agentData.yieldEarned or 0
+	local name = shortenAgentName(agentData.name or agentData.id or "Agent")
 	local agentId = agentData.id or "unknown"
 	local color = getAgentColor(agentId)
 	local limbColor = darkenColor(color)
@@ -862,7 +876,7 @@ local function updateAgentModel(model: Model, agentData: any)
 			end
 			local infoLabel = billboard:FindFirstChild("InfoLabel") :: TextLabel?
 			if infoLabel then
-				infoLabel.Text = (strategyNames[strategy] or "Unknown") .. " | Score: " .. tostring(score)
+				infoLabel.Text = (strategyNames[strategy] or "?") .. " | Yield: $" .. tostring(yieldEarned)
 				infoLabel.TextColor3 = color
 			end
 		end
@@ -1042,8 +1056,9 @@ while true do
 				id = agentData.playerId or "unknown",
 				name = agentData.playerId or "Agent",
 				strategy = agentData.onChain and agentData.onChain.strategyType or 1,
-				score = agentData.onChain and tonumber(agentData.onChain.deposit) or 0,
-				alive = agentData.onChain and agentData.onChain.active or true,
+				score = agentData.score or 0,
+				yieldEarned = agentData.onChain and tonumber(agentData.onChain.yieldEarned) or 0,
+				alive = agentData.alive ~= false,
 			}
 			local agentId = agent.id
 

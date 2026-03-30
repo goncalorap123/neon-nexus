@@ -17,6 +17,7 @@ export interface EnvConfig {
   AGENT_TRADING_ADDRESS: string;
   DEPOSIT_TOKEN_ADDRESS: string;
   DEPLOY_WALLET_KEY: string;
+  OPERATOR_KEYS: string[];
   GROQ_API_KEY: string;
 }
 
@@ -32,6 +33,7 @@ export function getEnvConfig(): EnvConfig {
     AGENT_TRADING_ADDRESS: process.env.AGENT_TRADING_ADDRESS || '',
     DEPOSIT_TOKEN_ADDRESS: process.env.DEPOSIT_TOKEN_ADDRESS || '',
     DEPLOY_WALLET_KEY: process.env.DEPLOY_WALLET_KEY || '',
+    OPERATOR_KEYS: (process.env.OPERATOR_KEYS || '').split(',').filter(k => k.length > 0),
     GROQ_API_KEY: process.env.GROQ_API_KEY || '',
   };
 }

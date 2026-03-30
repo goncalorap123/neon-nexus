@@ -6,11 +6,13 @@ import { TransactionLogService } from '../database/transaction-log.service';
 import { AiReasoningService, AgentDecisionContext } from '../ai/ai-reasoning.service';
 import { AgentActionService } from '../database/agent-action.service';
 
-// Yield rates per hour based on strategy (in token base units, e.g. 6 decimals)
+// Yield rates per cycle (every 5 min) based on strategy (in token base units, 6 decimals)
+// With 10 token deposit (10_000_000 base): safe ~$0.08, balanced ~$0.15, aggressive ~$0.30 per cycle
+// Over ~10 cycles with 6 agents → ~$10 total yield pool
 const YIELD_RATES = [
-  50n,   // conservative
-  100n,  // balanced
-  200n,  // aggressive
+  8000n,    // conservative: ~$0.08/cycle
+  15000n,   // balanced: ~$0.15/cycle
+  30000n,   // aggressive: ~$0.30/cycle
 ];
 
 // Resource distribution weights per strategy [wood, steel, energy, food]
@@ -21,10 +23,12 @@ const RESOURCE_WEIGHTS: Record<number, number[]> = {
 };
 
 // Burn rates per cycle based on strategy [food, energy]
+// Starting resources: 100 food, 100 energy
+// Conservative: ~10 cycles of food (50 min), Balanced: ~7 cycles (35 min), Aggressive: ~4 cycles (20 min)
 const BURN_RATES: Record<number, { food: bigint; energy: bigint }> = {
-  0: { food: 2n, energy: 1n },   // conservative
-  1: { food: 3n, energy: 2n },   // balanced
-  2: { food: 5n, energy: 4n },   // aggressive
+  0: { food: 10n, energy: 8n },    // conservative: cheap, survive ~10 cycles
+  1: { food: 15n, energy: 12n },   // balanced: medium, survive ~7 cycles
+  2: { food: 25n, energy: 20n },   // aggressive: expensive, survive ~4 cycles
 };
 
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
@@ -138,7 +142,7 @@ export class SettlementService {
     this.logger.log('Burn & survival check complete');
   }
 
-  @Cron(CronExpression.EVERY_HOUR)
+  // Yield distribution now runs every cycle (called from runAgentDecisions)
   async distributeYield() {
     this.logger.log('Running yield distribution...');
 
@@ -186,7 +190,10 @@ export class SettlementService {
   async runAgentDecisions() {
     this.logger.log('Running agent decision cycle...');
 
-    // Burn operational costs and check survival first
+    // 1. Distribute yield to all alive agents
+    await this.distributeYield();
+
+    // 2. Burn operational costs and check survival
     await this.burnAndCheckSurvival();
 
     const agents = await this.agentService.getAliveAgents();

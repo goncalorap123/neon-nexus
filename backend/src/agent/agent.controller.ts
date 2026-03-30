@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { AgentService } from './agent.service';
+import { BlockchainService } from '../blockchain/blockchain.service';
 import { TransactionLogService } from '../database/transaction-log.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 
@@ -8,6 +9,7 @@ import { ApiKeyGuard } from '../auth/api-key.guard';
 export class AgentController {
   constructor(
     private readonly agentService: AgentService,
+    private readonly blockchainService: BlockchainService,
     private readonly txLogService: TransactionLogService,
   ) {}
 
@@ -61,5 +63,23 @@ export class AgentController {
   async removeAgent(@Body() body: { playerId: string }) {
     await this.agentService.removeAgent(body.playerId);
     return { success: true };
+  }
+
+  @Post('fund-all-agents')
+  async fundAllAgents() {
+    const agents = await this.agentService.getAliveAgents();
+    let funded = 0;
+    for (const agent of agents) {
+      try {
+        const onChain = await this.blockchainService.getAgent(agent.address);
+        if (Number(onChain?.deposit ?? 0) === 0) {
+          await this.agentService.fundAndDeposit(agent.address, 10_000_000n);
+          funded++;
+        }
+      } catch (e) {
+        console.error(`Failed to fund ${agent.playerId}: ${e.message}`);
+      }
+    }
+    return { success: true, data: { funded } };
   }
 }
