@@ -20,6 +20,7 @@ local GetGameStateRF = createRemoteFunction("GetGameState")
 local TriggerEventRF = createRemoteFunction("TriggerEvent")
 local GetLeaderboardRF = createRemoteFunction("GetLeaderboard")
 local GetAgentHistoryRF = createRemoteFunction("GetAgentHistory")
+local GetRoundStatusRF = createRemoteFunction("GetRoundStatus")
 
 local function getPlayerId(plr: Player): string
 	return tostring(plr.UserId)
@@ -94,6 +95,15 @@ end
 -- GetAgentHistory: returns array of recent agent actions
 GetAgentHistoryRF.OnServerInvoke = function(plr)
 	local success, data = HttpBridge.getAgentHistory(getPlayerId(plr))
+	if success and data then
+		return data
+	end
+	return {}
+end
+
+-- GetRoundStatus: returns alive count, yield pool, eliminated agents
+GetRoundStatusRF.OnServerInvoke = function(_plr)
+	local success, data = HttpBridge.getRoundStatus()
 	if success and data then
 		return data
 	end

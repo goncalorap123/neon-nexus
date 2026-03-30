@@ -11,7 +11,11 @@ describe('SettlementService', () => {
 
   const mockAgentService = {
     getAllAgents: jest.fn(),
+    getAliveAgents: jest.fn(),
+    getAliveCount: jest.fn(),
     updateStrategy: jest.fn(),
+    eliminateAgent: jest.fn(),
+    incrementCyclesSurvived: jest.fn(),
   };
 
   const mockBlockchainService = {
@@ -21,6 +25,9 @@ describe('SettlementService', () => {
     encodeCreateOffer: jest.fn().mockReturnValue('0xOFFER'),
     encodeExecuteTrade: jest.fn().mockReturnValue('0xTRADE'),
     encodeSetStrategy: jest.fn().mockReturnValue('0xSTRAT'),
+    encodeDeactivateAgent: jest.fn().mockReturnValue('0xDEACTIVATE'),
+    encodeTransferYield: jest.fn().mockReturnValue('0xTRANSFER'),
+    encodeBurnResources: jest.fn().mockReturnValue('0xBURN'),
     encodeCommitEvent: jest.fn().mockReturnValue('0xCOMMIT'),
     encodeRevealEvent: jest.fn().mockReturnValue('0xREVEAL'),
     ownerSendTransaction: jest.fn().mockResolvedValue({ hash: '0xTX' }),
@@ -69,13 +76,13 @@ describe('SettlementService', () => {
 
   describe('distributeYield', () => {
     it('should do nothing when no active agents', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([]);
+      mockAgentService.getAliveAgents.mockResolvedValue([]);
       await service.distributeYield();
       expect(mockBlockchainService.ownerSendTransaction).not.toHaveBeenCalled();
     });
 
     it('should skip agents with zero deposit', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
+      mockAgentService.getAliveAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
       ]);
       mockBlockchainService.getAgent.mockResolvedValue({
@@ -91,7 +98,7 @@ describe('SettlementService', () => {
     });
 
     it('should skip inactive on-chain agents', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
+      mockAgentService.getAliveAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
       ]);
       mockBlockchainService.getAgent.mockResolvedValue({
@@ -106,7 +113,7 @@ describe('SettlementService', () => {
     });
 
     it('should calculate yield correctly for conservative strategy (rate=50)', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
+      mockAgentService.getAliveAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
       ]);
       mockBlockchainService.getAgent.mockResolvedValue({
@@ -127,7 +134,7 @@ describe('SettlementService', () => {
     });
 
     it('should calculate yield correctly for aggressive strategy (rate=200)', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
+      mockAgentService.getAliveAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
       ]);
       mockBlockchainService.getAgent.mockResolvedValue({
@@ -143,7 +150,7 @@ describe('SettlementService', () => {
     });
 
     it('should process multiple agents', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
+      mockAgentService.getAliveAgents.mockResolvedValue([
         { playerId: 'p1', address: '0xA' },
         { playerId: 'p2', address: '0xB' },
       ]);
@@ -173,14 +180,14 @@ describe('SettlementService', () => {
     });
 
     it('should do nothing when no active agents', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([]);
+      mockAgentService.getAliveAgents.mockResolvedValue([]);
       await service.runAgentDecisions();
       expect(mockAiReasoningService.decideAgentAction).not.toHaveBeenCalled();
     });
 
     it('should call AI reasoning service for each agent', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'idle',
@@ -195,13 +202,15 @@ describe('SettlementService', () => {
           agentId: 'p1',
           strategy: 'Balanced',
           strategyType: 1,
+          foodBurnRate: 3,
+          energyBurnRate: 2,
         }),
       );
     });
 
     it('should execute gather action and mint resources', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'gather',
@@ -220,8 +229,8 @@ describe('SettlementService', () => {
     });
 
     it('should execute trade create_offer action', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'trade',
@@ -244,8 +253,8 @@ describe('SettlementService', () => {
     });
 
     it('should execute trade accept_offer action', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'trade',
@@ -267,8 +276,8 @@ describe('SettlementService', () => {
     });
 
     it('should execute change_strategy action', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'change_strategy',
@@ -283,8 +292,8 @@ describe('SettlementService', () => {
     });
 
     it('should execute idle action and log it', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'idle',
@@ -301,8 +310,8 @@ describe('SettlementService', () => {
     });
 
     it('should update agent action tracking after decision', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockAiReasoningService.decideAgentAction.mockResolvedValue({
         action: 'gather',
@@ -318,8 +327,8 @@ describe('SettlementService', () => {
     });
 
     it('should skip inactive on-chain agents in decisions', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
       ]);
       mockBlockchainService.getAgent.mockResolvedValue({
         active: false,
@@ -334,20 +343,22 @@ describe('SettlementService', () => {
     });
 
     it('should handle errors gracefully for individual agents', async () => {
-      mockAgentService.getAllAgents.mockResolvedValue([
-        { playerId: 'p1', address: '0xA' },
-        { playerId: 'p2', address: '0xB' },
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', cyclesSurvived: 0 },
+        { playerId: 'p2', address: '0xB', cyclesSurvived: 0 },
       ]);
-      // The method calls getAgent in two loops: leaderboard build + decision
-      // Leaderboard loop: both succeed
-      // Decision loop: first agent throws, second succeeds
+      // burnAndCheckSurvival calls getAgent for each agent (2 calls)
+      // Leaderboard loop: 2 calls
+      // Decision loop: 2 calls (first throws, second succeeds)
+      // Total: burn(2) + leaderboard(2) + decision(2) = 6 calls
       let callCount = 0;
       mockBlockchainService.getAgent.mockImplementation(() => {
         callCount++;
-        // Calls 1,2 = leaderboard loop (both succeed)
-        // Call 3 = decision loop for p1 (throws)
-        // Call 4 = decision loop for p2 (succeeds)
-        if (callCount === 3) {
+        // Calls 1-2 = burnAndCheckSurvival (both succeed)
+        // Calls 3-4 = leaderboard loop (both succeed)
+        // Call 5 = decision loop for p1 (throws)
+        // Call 6 = decision loop for p2 (succeeds)
+        if (callCount === 5) {
           return Promise.reject(new Error('RPC error'));
         }
         return Promise.resolve(defaultOnChain);
@@ -360,8 +371,63 @@ describe('SettlementService', () => {
 
       await service.runAgentDecisions();
 
-      // First agent errored, second processed fine
+      // First agent errored in decision loop, second processed fine
       expect(mockAiReasoningService.decideAgentAction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('burnAndCheckSurvival', () => {
+    it('should do nothing when no alive agents', async () => {
+      mockAgentService.getAliveAgents.mockResolvedValue([]);
+      await service.burnAndCheckSurvival();
+      expect(mockBlockchainService.getAgent).not.toHaveBeenCalled();
+    });
+
+    it('should burn food and energy for alive agents', async () => {
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockBlockchainService.getAgent.mockResolvedValue({
+        active: true,
+        strategyType: 1,
+        deposit: '1000',
+        yieldEarned: '500',
+      });
+      // food = 50, energy = 50 (enough to survive with balanced burn: food=3, energy=2)
+      mockBlockchainService.getAgentResources
+        .mockResolvedValueOnce(50n) // food (type 3)
+        .mockResolvedValueOnce(50n); // energy (type 2)
+
+      await service.burnAndCheckSurvival();
+
+      expect(mockBlockchainService.encodeBurnResources).toHaveBeenCalledWith('0xA', 3, 3n);
+      expect(mockBlockchainService.encodeBurnResources).toHaveBeenCalledWith('0xA', 2, 2n);
+      expect(mockAgentService.incrementCyclesSurvived).toHaveBeenCalledWith('p1');
+    });
+
+    it('should eliminate agent when food is insufficient', async () => {
+      mockAgentService.getAliveAgents.mockResolvedValue([
+        { playerId: 'p1', address: '0xA' },
+      ]);
+      mockBlockchainService.getAgent.mockResolvedValue({
+        active: true,
+        strategyType: 1,
+        deposit: '1000',
+        yieldEarned: '500',
+      });
+      // food = 1 (less than burn rate of 3), energy = 50
+      mockBlockchainService.getAgentResources
+        .mockResolvedValueOnce(1n) // food
+        .mockResolvedValueOnce(50n); // energy
+
+      await service.burnAndCheckSurvival();
+
+      expect(mockBlockchainService.encodeDeactivateAgent).toHaveBeenCalledWith('0xA');
+      expect(mockAgentService.eliminateAgent).toHaveBeenCalledWith('p1');
+      expect(mockTxLogService.log).toHaveBeenCalledWith(
+        'p1', '0xA', 'agent_eliminated', '',
+        expect.objectContaining({ reason: 'insufficient_resources' }),
+      );
     });
   });
 });

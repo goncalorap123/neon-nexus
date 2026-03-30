@@ -16,6 +16,12 @@ describe('AiReasoningService', () => {
     totalAgents: 5,
     activeTradeOffers: [],
     recentHistory: ['resources_gathered: {}', 'idle: {}'],
+    foodBurnRate: 3,
+    energyBurnRate: 2,
+    cyclesOfFoodLeft: 26,
+    cyclesOfEnergyLeft: 100,
+    aliveAgentCount: 5,
+    cyclesSurvived: 10,
   };
 
   beforeEach(() => {
@@ -82,6 +88,55 @@ describe('AiReasoningService', () => {
         const decision = await service.decideAgentAction(baseContext);
         expect(validActions).toContain(decision.action);
       }
+    });
+
+    it('should prioritize gathering food when food cycles left < 5', async () => {
+      const context: AgentDecisionContext = {
+        ...baseContext,
+        resources: { wood: 5, steel: 5, energy: 200, food: 8 },
+        foodBurnRate: 3,
+        energyBurnRate: 2,
+        cyclesOfFoodLeft: 2,
+        cyclesOfEnergyLeft: 100,
+      };
+
+      const decision = await service.decideAgentAction(context);
+
+      // With very low food and no surplus wood/steel to trade, should gather food
+      expect(decision.action).toBe('gather');
+      expect(decision.details.resourceToGather).toBe(3);
+    });
+
+    it('should prioritize gathering energy when energy cycles left < 5', async () => {
+      const context: AgentDecisionContext = {
+        ...baseContext,
+        resources: { wood: 5, steel: 5, energy: 6, food: 200 },
+        foodBurnRate: 3,
+        energyBurnRate: 2,
+        cyclesOfFoodLeft: 66,
+        cyclesOfEnergyLeft: 3,
+      };
+
+      const decision = await service.decideAgentAction(context);
+
+      expect(decision.action).toBe('gather');
+      expect(decision.details.resourceToGather).toBe(2);
+    });
+
+    it('should try to trade surplus for food when food is critical but has surplus wood', async () => {
+      const context: AgentDecisionContext = {
+        ...baseContext,
+        resources: { wood: 100, steel: 5, energy: 200, food: 8 },
+        foodBurnRate: 3,
+        energyBurnRate: 2,
+        cyclesOfFoodLeft: 2,
+        cyclesOfEnergyLeft: 100,
+      };
+
+      const decision = await service.decideAgentAction(context);
+
+      expect(decision.action).toBe('trade');
+      expect(decision.details.tradeAction).toBe('create_offer');
     });
   });
 });

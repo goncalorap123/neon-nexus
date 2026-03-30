@@ -10,6 +10,8 @@ const NEON_NEXUS_ABI = [
   'function setStrategy(address agentWallet, uint8 strategyType) external',
   'function getAgent(address agentWallet) external view returns (tuple(address wallet, uint256 deposit, uint256 yieldEarned, uint256 lastHarvest, uint8 strategyType, bool active))',
   'function totalDeposits() external view returns (uint256)',
+  'function deactivateAgent(address agentWallet) external',
+  'function transferYield(address from, address to, uint256 amount) external',
 ];
 
 const RANDOM_EVENTS_ABI = [
@@ -23,6 +25,7 @@ const AGENT_TRADING_ABI = [
   'function executeTrade(address buyer, uint256 offerId, uint256 quantity) external',
   'function mintResources(address agent, uint8 resourceType, uint256 quantity) external',
   'function cancelOffer(uint256 offerId) external',
+  'function burnResources(address agent, uint8 resourceType, uint256 amount) external',
   'function agentResources(address agent, uint8 resourceType) external view returns (uint256)',
   'function offers(uint256 offerId) external view returns (address seller, uint8 resourceType, uint256 quantity, uint256 pricePerUnit, bool active)',
   'function nextOfferId() external view returns (uint256)',
@@ -106,6 +109,14 @@ export class BlockchainService implements OnModuleInit {
     return this.neonNexus.interface.encodeFunctionData('setStrategy', [agentWallet, strategyType]);
   }
 
+  encodeDeactivateAgent(agentWallet: string): string {
+    return this.neonNexus.interface.encodeFunctionData('deactivateAgent', [agentWallet]);
+  }
+
+  encodeTransferYield(from: string, to: string, amount: bigint): string {
+    return this.neonNexus.interface.encodeFunctionData('transferYield', [from, to, amount]);
+  }
+
   // RandomEvents encode methods
   encodeCommitEvent(agent: string, eventType: number): string {
     return this.randomEvents.interface.encodeFunctionData('commitEvent', [agent, eventType]);
@@ -126,6 +137,10 @@ export class BlockchainService implements OnModuleInit {
 
   encodeMintResources(agent: string, resourceType: number, quantity: bigint): string {
     return this.agentTrading.interface.encodeFunctionData('mintResources', [agent, resourceType, quantity]);
+  }
+
+  encodeBurnResources(agent: string, resourceType: number, amount: bigint): string {
+    return this.agentTrading.interface.encodeFunctionData('burnResources', [agent, resourceType, amount]);
   }
 
   // Read methods

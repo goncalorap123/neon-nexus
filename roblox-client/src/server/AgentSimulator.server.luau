@@ -177,6 +177,138 @@ local function consumeResource(part: Part)
 	end)
 end
 
+-- Show floating text above a position (e.g., "+5 Food" on pickup, "-3 Food" on burn)
+local function showFloatingText(position: Vector3, text: string, color: Color3)
+	local part = Instance.new("Part")
+	part.Size = Vector3.new(1, 1, 1)
+	part.Transparency = 1
+	part.Anchored = true
+	part.CanCollide = false
+	part.Position = position + Vector3.new(0, 3, 0)
+	part.Parent = workspace
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0, 160, 0, 30)
+	billboard.StudsOffset = Vector3.new(0, 0, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = color
+	label.TextStrokeTransparency = 0.3
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	label.TextSize = 18
+	label.Font = Enum.Font.GothamBold
+	label.Text = text
+	label.Parent = billboard
+
+	-- Float upward and fade out
+	task.spawn(function()
+		for i = 1, 30 do
+			part.Position = part.Position + Vector3.new(0, 0.06, 0)
+			label.TextTransparency = i / 30
+			label.TextStrokeTransparency = 0.3 + (i / 30) * 0.7
+			task.wait(0.03)
+		end
+		part:Destroy()
+	end)
+end
+
+-- Play death/liquidation animation on an NPC model
+local function playDeathAnimation(model: Model, agentId: string)
+	-- Flash red
+	for _, child in model:GetChildren() do
+		if child:IsA("Part") then
+			child.Color = Color3.fromRGB(255, 30, 30)
+		end
+	end
+
+	-- Show LIQUIDATED bubble
+	showActionBubble(model, "LIQUIDATED", 3)
+
+	-- Show floating text
+	local torso = model:FindFirstChild("Torso") :: Part?
+	if torso then
+		showFloatingText(torso.Position, "LIQUIDATED", Color3.fromRGB(255, 50, 50))
+	end
+
+	-- Fade out over 2 seconds
+	task.spawn(function()
+		for i = 1, 40 do
+			local t = i / 40
+			for _, child in model:GetChildren() do
+				if child:IsA("Part") then
+					child.Transparency = t
+				end
+			end
+			task.wait(0.05)
+		end
+
+		-- Red particle burst before removal
+		if torso and torso.Parent then
+			local burstPart = Instance.new("Part")
+			burstPart.Size = Vector3.new(1, 1, 1)
+			burstPart.Transparency = 1
+			burstPart.Anchored = true
+			burstPart.CanCollide = false
+			burstPart.Position = torso.Position
+			burstPart.Parent = workspace
+
+			local burst = Instance.new("ParticleEmitter")
+			burst.Color = ColorSequence.new(Color3.fromRGB(255, 30, 30))
+			burst.Rate = 100
+			burst.Lifetime = NumberRange.new(0.3, 0.8)
+			burst.Speed = NumberRange.new(5, 15)
+			burst.SpreadAngle = Vector2.new(180, 180)
+			burst.LightEmission = 1
+			burst.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.5),
+				NumberSequenceKeypoint.new(1, 0),
+			})
+			burst.Parent = burstPart
+
+			task.delay(0.4, function()
+				burst.Enabled = false
+			end)
+			task.delay(2, function()
+				if burstPart.Parent then burstPart:Destroy() end
+			end)
+		end
+
+		-- Clean up
+		model:Destroy()
+		agentModels[agentId] = nil
+		wanderTargets[agentId] = nil
+		isMoving[agentId] = nil
+		agentFacing[agentId] = nil
+		arrivalTime[agentId] = nil
+		lingerDuration[agentId] = nil
+		lastBubbleTime[agentId] = nil
+		agentActions[agentId] = nil
+	end)
+end
+
+-- Show brief burn visual on all alive NPCs (red pulse + floating cost text)
+local function showBurnVisual(model: Model, foodBurn: number, energyBurn: number)
+	local torso = model:FindFirstChild("Torso") :: Part?
+	if not torso then return end
+
+	-- Brief red pulse on torso
+	local origColor = torso.Color
+	torso.Color = Color3.fromRGB(255, 80, 80)
+	task.delay(0.3, function()
+		if torso and torso.Parent then
+			torso.Color = origColor
+		end
+	end)
+
+	-- Floating burn text
+	local burnText = string.format("-%d Food -%d Energy", foodBurn, energyBurn)
+	showFloatingText(torso.Position, burnText, Color3.fromRGB(255, 100, 100))
+end
+
 -- Find the nearest visible (not on cooldown) resource Part of a given type
 local function findNearestResourcePart(origin: Vector3, resName: string): Part?
 	local cityWorld = workspace:FindFirstChild("CityWorld")
@@ -753,13 +885,15 @@ RunService.Heartbeat:Connect(function(dt)
 					local hasAction = actionData and actionData.currentAction and actionData.currentAction ~= "idle"
 					lingerDuration[agentId] = if hasAction then (4 + math.random() * 6) else (2 + math.random() * 3)
 
-					-- If gathering, consume the nearest resource node
+					-- If gathering, consume the nearest resource node and show pickup text
 					if actionData and actionData.currentAction == "gather" then
 						local resType = actionData.targetResourceType
 						local resName = RESOURCE_NAMES_BY_INDEX[resType] or "wood"
 						local resPart = findNearestResourcePart(currentPos, resName)
 						if resPart and (currentPos - resPart.Position).Magnitude < 8 then
 							consumeResource(resPart)
+							local displayName = string.upper(string.sub(resName, 1, 1)) .. string.sub(resName, 2)
+							showFloatingText(currentPos, "+5 " .. displayName, Color3.fromRGB(50, 255, 120))
 						end
 					end
 				end
@@ -880,17 +1014,11 @@ while true do
 			}
 			local agentId = agent.id
 
-			-- Skip dead agents
+			-- Skip dead agents — play death animation if model still exists
 			if agent.alive == false then
 				if agentModels[agentId] then
-					print("[AgentSimulator] Agent died, removing model:", agentId)
-					agentModels[agentId]:Destroy()
-					agentModels[agentId] = nil
-					wanderTargets[agentId] = nil
-					isMoving[agentId] = nil
-					agentFacing[agentId] = nil
-					arrivalTime[agentId] = nil
-					lingerDuration[agentId] = nil
+					print("[AgentSimulator] Agent LIQUIDATED:", agentId)
+					task.spawn(playDeathAnimation, agentModels[agentId], agentId)
 				end
 				continue
 			end

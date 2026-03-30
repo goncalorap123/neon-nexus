@@ -10,8 +10,11 @@ describe('GameService', () => {
 
   const mockAgentService = {
     getAgent: jest.fn(),
+    getAgentEntity: jest.fn(),
     getWalletInfo: jest.fn(),
     getAllPlayerIds: jest.fn(),
+    getAliveCount: jest.fn(),
+    getAllAgentsIncludingEliminated: jest.fn(),
   };
 
   const mockRandomService = {
@@ -20,6 +23,7 @@ describe('GameService', () => {
   };
 
   const mockBlockchainService = {
+    getAgent: jest.fn(),
     getAgentResources: jest.fn(),
     getBalance: jest.fn(),
     encodeMintResources: jest.fn().mockReturnValue('0xDATA'),
@@ -57,8 +61,18 @@ describe('GameService', () => {
       mockAgentService.getAgent.mockResolvedValue({
         playerId: 'player1',
         address: '0xABC',
-        onChain: { deposit: 1000, yieldEarned: 200 },
+        onChain: { deposit: 1000, yieldEarned: 200, strategyType: 1 },
       });
+      mockAgentService.getAgentEntity.mockResolvedValue({
+        playerId: 'player1',
+        cyclesSurvived: 5,
+        eliminated: false,
+        isHouseAgent: false,
+      });
+      mockAgentService.getAliveCount.mockResolvedValue(3);
+      mockAgentService.getAllAgentsIncludingEliminated.mockResolvedValue([
+        { playerId: 'player1' }, { playerId: 'player2' }, { playerId: 'player3' },
+      ]);
       mockBlockchainService.getAgentResources
         .mockResolvedValueOnce(10n) // wood
         .mockResolvedValueOnce(5n)  // steel
@@ -78,14 +92,27 @@ describe('GameService', () => {
       expect(result.flowBalance).toBe('50.0');
       // score = 1000 + 200 + (10*10 + 5*15 + 3*20 + 8*10) = 1200 + (100+75+60+80) = 1515
       expect(result.score).toBe(1515);
+      // Survival info
+      expect(result.survival).toBeDefined();
+      expect(result.survival.cyclesSurvived).toBe(5);
+      expect(result.aliveCount).toBe(3);
+      expect(result.totalAgents).toBe(3);
     });
 
     it('should default resources to "0" on error', async () => {
       mockAgentService.getAgent.mockResolvedValue({
         playerId: 'player1',
         address: '0xABC',
-        onChain: { deposit: 0, yieldEarned: 0 },
+        onChain: { deposit: 0, yieldEarned: 0, strategyType: 1 },
       });
+      mockAgentService.getAgentEntity.mockResolvedValue({
+        playerId: 'player1',
+        cyclesSurvived: 0,
+        eliminated: false,
+        isHouseAgent: false,
+      });
+      mockAgentService.getAliveCount.mockResolvedValue(1);
+      mockAgentService.getAllAgentsIncludingEliminated.mockResolvedValue([{ playerId: 'player1' }]);
       mockBlockchainService.getAgentResources.mockRejectedValue(new Error('fail'));
       mockBlockchainService.getBalance.mockRejectedValue(new Error('fail'));
 
@@ -266,35 +293,32 @@ describe('GameService', () => {
   });
 
   describe('getLeaderboard', () => {
-    it('should return agents sorted by score descending', async () => {
-      mockAgentService.getAllPlayerIds.mockResolvedValue(['p1', 'p2']);
-      mockAgentService.getAgent
-        .mockResolvedValueOnce({
-          playerId: 'p1',
-          address: '0xA',
-          onChain: { deposit: 100, yieldEarned: 50 },
-        })
-        .mockResolvedValueOnce({
-          playerId: 'p2',
-          address: '0xB',
-          onChain: { deposit: 500, yieldEarned: 200 },
-        });
+    it('should return agents sorted by score descending, alive first', async () => {
+      mockAgentService.getAllAgentsIncludingEliminated.mockResolvedValue([
+        { playerId: 'p1', address: '0xA', active: true, eliminated: false, isHouseAgent: false, cyclesSurvived: 2 },
+        { playerId: 'p2', address: '0xB', active: true, eliminated: false, isHouseAgent: false, cyclesSurvived: 5 },
+      ]);
 
-      // p1 resources: all 0
+      mockBlockchainService.getAgent
+        .mockResolvedValueOnce({ deposit: '100', yieldEarned: '50', strategyType: 1, active: true })
+        .mockResolvedValueOnce({ deposit: '500', yieldEarned: '200', strategyType: 1, active: true });
+
+      // All resources 0
       mockBlockchainService.getAgentResources.mockResolvedValue(0n);
 
       const result = await service.getLeaderboard();
 
       expect(result.length).toBe(2);
-      // p2 score = 700 > p1 score = 150
+      // p2 score = 500+200 + 0 + 5*100 = 1200 > p1 score = 100+50 + 0 + 2*100 = 350
       expect(result[0].playerId).toBe('p2');
       expect(result[1].playerId).toBe('p1');
-      expect(result[0].score).toBe(700);
-      expect(result[1].score).toBe(150);
+      expect(result[0].score).toBe(1200);
+      expect(result[1].score).toBe(350);
+      expect(result[0].alive).toBe(true);
     });
 
     it('should return empty array when no agents', async () => {
-      mockAgentService.getAllPlayerIds.mockResolvedValue([]);
+      mockAgentService.getAllAgentsIncludingEliminated.mockResolvedValue([]);
       const result = await service.getLeaderboard();
       expect(result).toEqual([]);
     });

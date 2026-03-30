@@ -12,6 +12,7 @@ describe('AgentService', () => {
   const mockAgentRepo = {
     findOneBy: jest.fn(),
     find: jest.fn(),
+    count: jest.fn(),
     create: jest.fn((d) => d),
     save: jest.fn((d) => d),
   };
@@ -24,9 +25,11 @@ describe('AgentService', () => {
     encodeRegisterAgent: jest.fn().mockReturnValue('0xDATA'),
     encodeDeposit: jest.fn().mockReturnValue('0xDATA'),
     encodeSetStrategy: jest.fn().mockReturnValue('0xDATA'),
+    encodeMintResources: jest.fn().mockReturnValue('0xMINT'),
     ownerSendTransaction: jest.fn().mockResolvedValue({ hash: '0xTX' }),
     fundWallet: jest.fn().mockResolvedValue({ hash: '0xFUND' }),
     getNeonNexusAddress: jest.fn().mockReturnValue('0xNEON'),
+    getAgentTradingAddress: jest.fn().mockReturnValue('0xTRADE'),
     getAgent: jest.fn(),
     getBalance: jest.fn(),
   };
@@ -100,6 +103,11 @@ describe('AgentService', () => {
         address: '0xABC',
       });
       expect(mockAgentRepo.save).toHaveBeenCalled();
+
+      // Seeds starting resources (4 resource types)
+      expect(mockBlockchainService.encodeMintResources).toHaveBeenCalledTimes(4);
+      // 1 registerAgent + 4 seedResources = 5 ownerSendTransaction calls
+      expect(mockBlockchainService.ownerSendTransaction).toHaveBeenCalledTimes(5);
 
       expect(result).toEqual({
         walletId: 'wallet-123',
@@ -263,6 +271,110 @@ describe('AgentService', () => {
       mockAgentRepo.find.mockResolvedValue([]);
       const result = await service.getAllPlayerIds();
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('getAgentEntity', () => {
+    it('should return agent entity when found', async () => {
+      const entity = { playerId: 'p1', walletId: 'w1', address: '0xA', cyclesSurvived: 5 };
+      mockAgentRepo.findOneBy.mockResolvedValue(entity);
+
+      const result = await service.getAgentEntity('p1');
+      expect(result).toEqual(entity);
+      expect(mockAgentRepo.findOneBy).toHaveBeenCalledWith({ playerId: 'p1' });
+    });
+
+    it('should return null when not found', async () => {
+      mockAgentRepo.findOneBy.mockResolvedValue(null);
+      const result = await service.getAgentEntity('unknown');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getAliveAgents', () => {
+    it('should return alive non-eliminated agents', async () => {
+      const agents = [{ playerId: 'p1', active: true, eliminated: false }];
+      mockAgentRepo.find.mockResolvedValue(agents);
+
+      const result = await service.getAliveAgents();
+      expect(mockAgentRepo.find).toHaveBeenCalledWith({ where: { active: true, eliminated: false } });
+      expect(result).toEqual(agents);
+    });
+  });
+
+  describe('getAliveCount', () => {
+    it('should return count of alive agents', async () => {
+      mockAgentRepo.count.mockResolvedValue(3);
+
+      const result = await service.getAliveCount();
+      expect(mockAgentRepo.count).toHaveBeenCalledWith({ where: { active: true, eliminated: false } });
+      expect(result).toBe(3);
+    });
+  });
+
+  describe('eliminateAgent', () => {
+    it('should mark agent as eliminated', async () => {
+      const agent = { playerId: 'p1', active: true, eliminated: false, eliminatedAt: null };
+      mockAgentRepo.findOneBy.mockResolvedValue(agent);
+
+      await service.eliminateAgent('p1');
+
+      expect(agent.active).toBe(false);
+      expect(agent.eliminated).toBe(true);
+      expect(agent.eliminatedAt).toBeInstanceOf(Date);
+      expect(mockAgentRepo.save).toHaveBeenCalledWith(agent);
+    });
+
+    it('should do nothing when agent not found', async () => {
+      mockAgentRepo.findOneBy.mockResolvedValue(null);
+      await service.eliminateAgent('unknown');
+      expect(mockAgentRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('incrementCyclesSurvived', () => {
+    it('should increment cyclesSurvived by 1', async () => {
+      const agent = { playerId: 'p1', cyclesSurvived: 5 };
+      mockAgentRepo.findOneBy.mockResolvedValue(agent);
+
+      await service.incrementCyclesSurvived('p1');
+
+      expect(agent.cyclesSurvived).toBe(6);
+      expect(mockAgentRepo.save).toHaveBeenCalledWith(agent);
+    });
+  });
+
+  describe('getAllAgentsIncludingEliminated', () => {
+    it('should return all agents without filter', async () => {
+      const agents = [
+        { playerId: 'p1', eliminated: false },
+        { playerId: 'p2', eliminated: true },
+      ];
+      mockAgentRepo.find.mockResolvedValue(agents);
+
+      const result = await service.getAllAgentsIncludingEliminated();
+      expect(mockAgentRepo.find).toHaveBeenCalledWith();
+      expect(result).toEqual(agents);
+    });
+  });
+
+  describe('isHouseAgent', () => {
+    it('should return true for house agents', async () => {
+      mockAgentRepo.findOneBy.mockResolvedValue({ playerId: 'house-1', isHouseAgent: true });
+      const result = await service.isHouseAgent('house-1');
+      expect(result).toBe(true);
+    });
+
+    it('should return false for regular agents', async () => {
+      mockAgentRepo.findOneBy.mockResolvedValue({ playerId: 'p1', isHouseAgent: false });
+      const result = await service.isHouseAgent('p1');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when agent not found', async () => {
+      mockAgentRepo.findOneBy.mockResolvedValue(null);
+      const result = await service.isHouseAgent('unknown');
+      expect(result).toBe(false);
     });
   });
 });

@@ -20,6 +20,13 @@ const RESOURCE_WEIGHTS: Record<number, number[]> = {
   2: [15, 20, 45, 20],
 };
 
+// Burn rates per cycle based on strategy [food, energy]
+const BURN_RATES: Record<number, { food: bigint; energy: bigint }> = {
+  0: { food: 2n, energy: 1n },   // conservative
+  1: { food: 3n, energy: 2n },   // balanced
+  2: { food: 5n, energy: 4n },   // aggressive
+};
+
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
 const STRATEGY_NAMES = ['Conservative', 'Balanced', 'Aggressive'];
 
@@ -35,13 +42,109 @@ export class SettlementService {
     private readonly agentActionService: AgentActionService,
   ) {}
 
+  // Burn operational costs and check survival before each decision cycle
+  async burnAndCheckSurvival(): Promise<void> {
+    this.logger.log('Running burn & survival check...');
+
+    const agents = await this.agentService.getAliveAgents();
+    if (agents.length === 0) return;
+
+    for (const agent of agents) {
+      try {
+        const onChain = await this.blockchainService.getAgent(agent.address);
+        if (!onChain || !onChain.active) continue;
+
+        const strategyType = Number(onChain.strategyType);
+        const burnRate = BURN_RATES[strategyType] ?? BURN_RATES[1];
+
+        // Read food (type 3) and energy (type 2) balances
+        const foodBalance = await this.blockchainService.getAgentResources(agent.address, 3);
+        const energyBalance = await this.blockchainService.getAgentResources(agent.address, 2);
+
+        // Check if agent can pay operational costs
+        if (foodBalance < burnRate.food || energyBalance < burnRate.energy) {
+          // LIQUIDATION — agent can't pay costs
+          this.logger.warn(`Agent ${agent.playerId} LIQUIDATED — food: ${foodBalance}, energy: ${energyBalance}`);
+
+          // Deactivate on-chain
+          const deactivateData = this.blockchainService.encodeDeactivateAgent(agent.address);
+          await this.blockchainService.ownerSendTransaction(
+            this.blockchainService.getNeonNexusAddress(),
+            deactivateData,
+          );
+
+          // Eliminate in DB
+          await this.agentService.eliminateAgent(agent.playerId);
+
+          // Redistribute yield to survivors
+          const yieldEarned = BigInt(onChain.yieldEarned);
+          if (yieldEarned > 0n) {
+            const survivors = await this.agentService.getAliveAgents();
+            if (survivors.length > 0) {
+              const sharePerSurvivor = yieldEarned / BigInt(survivors.length);
+              if (sharePerSurvivor > 0n) {
+                for (const survivor of survivors) {
+                  const transferData = this.blockchainService.encodeTransferYield(
+                    agent.address,
+                    survivor.address,
+                    sharePerSurvivor,
+                  );
+                  await this.blockchainService.ownerSendTransaction(
+                    this.blockchainService.getNeonNexusAddress(),
+                    transferData,
+                  );
+                }
+              }
+            }
+          }
+
+          await this.txLogService.log(agent.playerId, agent.address, 'agent_eliminated', '', {
+            reason: 'insufficient_resources',
+            foodBalance: foodBalance.toString(),
+            energyBalance: energyBalance.toString(),
+            yieldRedistributed: onChain.yieldEarned,
+          });
+
+          continue;
+        }
+
+        // Burn food and energy
+        const burnFoodData = this.blockchainService.encodeBurnResources(agent.address, 3, burnRate.food);
+        await this.blockchainService.ownerSendTransaction(
+          this.blockchainService.getAgentTradingAddress(),
+          burnFoodData,
+        );
+
+        const burnEnergyData = this.blockchainService.encodeBurnResources(agent.address, 2, burnRate.energy);
+        await this.blockchainService.ownerSendTransaction(
+          this.blockchainService.getAgentTradingAddress(),
+          burnEnergyData,
+        );
+
+        // Increment cycles survived
+        await this.agentService.incrementCyclesSurvived(agent.playerId);
+
+        await this.txLogService.log(agent.playerId, agent.address, 'resources_burned', '', {
+          foodBurned: burnRate.food.toString(),
+          energyBurned: burnRate.energy.toString(),
+          strategy: STRATEGY_NAMES[strategyType],
+        });
+
+      } catch (error) {
+        this.logger.error(`Burn check failed for ${agent.playerId}: ${error.message}`);
+      }
+    }
+
+    this.logger.log('Burn & survival check complete');
+  }
+
   @Cron(CronExpression.EVERY_HOUR)
   async distributeYield() {
     this.logger.log('Running yield distribution...');
 
-    const agents = await this.agentService.getAllAgents();
+    const agents = await this.agentService.getAliveAgents();
     if (agents.length === 0) {
-      this.logger.log('No active agents, skipping yield distribution');
+      this.logger.log('No alive agents, skipping yield distribution');
       return;
     }
 
@@ -83,9 +186,12 @@ export class SettlementService {
   async runAgentDecisions() {
     this.logger.log('Running agent decision cycle...');
 
-    const agents = await this.agentService.getAllAgents();
+    // Burn operational costs and check survival first
+    await this.burnAndCheckSurvival();
+
+    const agents = await this.agentService.getAliveAgents();
     if (agents.length === 0) {
-      this.logger.log('No active agents, skipping decision cycle');
+      this.logger.log('No alive agents, skipping decision cycle');
       return;
     }
 
@@ -184,6 +290,14 @@ export class SettlementService {
           recentHistory = [];
         }
 
+        // Compute survival context
+        const burnRate = BURN_RATES[strategyType] ?? BURN_RATES[1];
+        const foodBurnRate = Number(burnRate.food);
+        const energyBurnRate = Number(burnRate.energy);
+        const cyclesOfFoodLeft = foodBurnRate > 0 ? Math.floor(resources.food / foodBurnRate) : 999;
+        const cyclesOfEnergyLeft = energyBurnRate > 0 ? Math.floor(resources.energy / energyBurnRate) : 999;
+        const aliveAgentCount = agents.length;
+
         // Build context
         const context: AgentDecisionContext = {
           agentId: agent.playerId,
@@ -198,6 +312,12 @@ export class SettlementService {
           totalAgents: agents.length,
           activeTradeOffers: activeOffers,
           recentHistory,
+          foodBurnRate,
+          energyBurnRate,
+          cyclesOfFoodLeft,
+          cyclesOfEnergyLeft,
+          aliveAgentCount,
+          cyclesSurvived: agent.cyclesSurvived ?? 0,
         };
 
         // Get AI decision

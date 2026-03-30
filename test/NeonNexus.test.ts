@@ -683,4 +683,220 @@ describe("NeonNexus", function () {
       expect(agent.active).to.equal(false);
     });
   });
+
+  describe("deactivateAgent", function () {
+    it("should deactivate an active agent", async function () {
+      const { nexus, player, agentWallet, publicClient } =
+        await loadFixture(deployFixture);
+
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.deactivateAgent([agentWallet.account.address]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const agent = await nexus.read.getAgent([agentWallet.account.address]);
+      expect(agent.active).to.equal(false);
+    });
+
+    it("should revert for already inactive agent", async function () {
+      const { nexus, player, agentWallet, publicClient } =
+        await loadFixture(deployFixture);
+
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.deactivateAgent([agentWallet.account.address]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      await expect(
+        nexus.write.deactivateAgent([agentWallet.account.address])
+      ).to.be.rejectedWith("Agent not active");
+    });
+
+    it("should revert when called by non-owner", async function () {
+      const { nexus, player, agentWallet, publicClient } =
+        await loadFixture(deployFixture);
+
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const nexusAsPlayer = await hre.viem.getContractAt(
+        "NeonNexus",
+        nexus.address,
+        { client: { wallet: player } }
+      );
+
+      await expect(
+        nexusAsPlayer.write.deactivateAgent([agentWallet.account.address])
+      ).to.be.rejectedWith("OwnableUnauthorizedAccount");
+    });
+  });
+
+  describe("transferYield", function () {
+    it("should transfer yield from one agent to another", async function () {
+      const { nexus, player, agentWallet, anotherAgent, publicClient } =
+        await loadFixture(deployFixture);
+
+      // Register both agents
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.registerAgent([
+        anotherAgent.account.address,
+        anotherAgent.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      // Give first agent some yield
+      hash = await nexus.write.distributeYield([
+        agentWallet.account.address,
+        1000n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      // Transfer yield
+      hash = await nexus.write.transferYield([
+        agentWallet.account.address,
+        anotherAgent.account.address,
+        400n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const agent1 = await nexus.read.getAgent([agentWallet.account.address]);
+      const agent2 = await nexus.read.getAgent([
+        anotherAgent.account.address,
+      ]);
+      expect(agent1.yieldEarned).to.equal(600n);
+      expect(agent2.yieldEarned).to.equal(400n);
+    });
+
+    it("should not touch principal deposits", async function () {
+      const { nexus, token, player, agentWallet, anotherAgent, publicClient } =
+        await loadFixture(deployFixture);
+
+      // Register both agents
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.registerAgent([
+        anotherAgent.account.address,
+        anotherAgent.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      // Deposit principal for agent1
+      hash = await token.write.mint([player.account.address, 5000n]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const tokenAsPlayer = await hre.viem.getContractAt(
+        "MockERC20",
+        token.address,
+        { client: { wallet: player } }
+      );
+      hash = await tokenAsPlayer.write.approve([nexus.address, 5000n]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const nexusAsPlayer = await hre.viem.getContractAt(
+        "NeonNexus",
+        nexus.address,
+        { client: { wallet: player } }
+      );
+      hash = await nexusAsPlayer.write.deposit([
+        agentWallet.account.address,
+        5000n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      // Give yield and transfer it
+      hash = await nexus.write.distributeYield([
+        agentWallet.account.address,
+        200n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.transferYield([
+        agentWallet.account.address,
+        anotherAgent.account.address,
+        200n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      // Principal unchanged
+      const agent1 = await nexus.read.getAgent([agentWallet.account.address]);
+      expect(agent1.deposit).to.equal(5000n);
+      expect(agent1.yieldEarned).to.equal(0n);
+    });
+
+    it("should revert when insufficient yield", async function () {
+      const { nexus, player, agentWallet, anotherAgent, publicClient } =
+        await loadFixture(deployFixture);
+
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.registerAgent([
+        anotherAgent.account.address,
+        anotherAgent.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      await expect(
+        nexus.write.transferYield([
+          agentWallet.account.address,
+          anotherAgent.account.address,
+          100n,
+        ])
+      ).to.be.rejectedWith("Insufficient yield");
+    });
+
+    it("should revert when called by non-owner", async function () {
+      const { nexus, player, agentWallet, anotherAgent, publicClient } =
+        await loadFixture(deployFixture);
+
+      let hash = await nexus.write.registerAgent([
+        player.account.address,
+        agentWallet.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await nexus.write.registerAgent([
+        anotherAgent.account.address,
+        anotherAgent.account.address,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const nexusAsPlayer = await hre.viem.getContractAt(
+        "NeonNexus",
+        nexus.address,
+        { client: { wallet: player } }
+      );
+
+      await expect(
+        nexusAsPlayer.write.transferYield([
+          agentWallet.account.address,
+          anotherAgent.account.address,
+          100n,
+        ])
+      ).to.be.rejectedWith("OwnableUnauthorizedAccount");
+    });
+  });
 });

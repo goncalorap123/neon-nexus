@@ -19,6 +19,7 @@ contract AgentTrading is Ownable {
     event OfferCreated(uint256 indexed offerId, address indexed seller, uint8 resourceType, uint256 quantity, uint256 price);
     event TradeExecuted(uint256 indexed offerId, address indexed buyer, uint256 quantity);
     event OfferCancelled(uint256 indexed offerId);
+    event ResourcesBurned(address indexed agent, uint8 resourceType, uint256 amount);
 
     constructor() Ownable(msg.sender) {}
 
@@ -43,6 +44,12 @@ contract AgentTrading is Ownable {
 
     function mintResources(address agent, uint8 resourceType, uint256 quantity) external onlyOwner {
         agentResources[agent][resourceType] += quantity;
+    }
+
+    function burnResources(address agent, uint8 resourceType, uint256 amount) external onlyOwner {
+        require(agentResources[agent][resourceType] >= amount, "Insufficient resources");
+        agentResources[agent][resourceType] -= amount;
+        emit ResourcesBurned(agent, resourceType, amount);
     }
 
     function cancelOffer(uint256 offerId) external onlyOwner {

@@ -26,6 +26,8 @@ contract NeonNexus is Ownable {
     event Withdrawn(address indexed agentWallet, uint256 amount);
     event YieldHarvested(address indexed agentWallet, uint256 amount);
     event StrategyUpdated(address indexed agentWallet, uint8 strategyType);
+    event AgentEliminated(address indexed agentWallet);
+    event YieldTransferred(address indexed from, address indexed to, uint256 amount);
 
     constructor(address _depositToken) Ownable(msg.sender) {
         depositToken = IERC20(_depositToken);
@@ -75,6 +77,20 @@ contract NeonNexus is Ownable {
         require(strategyType <= 2, "Invalid strategy");
         agents[agentWallet].strategyType = strategyType;
         emit StrategyUpdated(agentWallet, strategyType);
+    }
+
+    function deactivateAgent(address agentWallet) external onlyOwner {
+        require(agents[agentWallet].active, "Agent not active");
+        agents[agentWallet].active = false;
+        emit AgentEliminated(agentWallet);
+    }
+
+    function transferYield(address from, address to, uint256 amount) external onlyOwner {
+        require(agents[from].yieldEarned >= amount, "Insufficient yield");
+        require(agents[to].active, "Recipient not active");
+        agents[from].yieldEarned -= amount;
+        agents[to].yieldEarned += amount;
+        emit YieldTransferred(from, to, amount);
     }
 
     function getAgent(address agentWallet) external view returns (Agent memory) {

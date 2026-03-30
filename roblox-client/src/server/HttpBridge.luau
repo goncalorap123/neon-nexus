@@ -143,4 +143,9 @@ function HttpBridge.getAgentActions()
 	return HttpBridge.request("GET", "/game/agent-actions")
 end
 
+-- Get round status (alive count, yield pool, eliminated agents)
+function HttpBridge.getRoundStatus()
+	return HttpBridge.request("GET", "/game/round-status")
+end
+
 return HttpBridge

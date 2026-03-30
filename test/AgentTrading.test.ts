@@ -628,4 +628,82 @@ describe("AgentTrading", function () {
       );
     });
   });
+
+  describe("burnResources", function () {
+    it("should burn resources from an agent", async function () {
+      const { trading, seller, publicClient } =
+        await loadFixture(deployFixture);
+
+      // Mint then burn
+      let hash = await trading.write.mintResources([
+        seller.account.address,
+        3, // food
+        100n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await trading.write.burnResources([
+        seller.account.address,
+        3,
+        30n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const balance = await trading.read.agentResources([
+        seller.account.address,
+        3,
+      ]);
+      expect(balance).to.equal(70n);
+    });
+
+    it("should emit ResourcesBurned event", async function () {
+      const { trading, seller, publicClient } =
+        await loadFixture(deployFixture);
+
+      let hash = await trading.write.mintResources([
+        seller.account.address,
+        2, // energy
+        50n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      hash = await trading.write.burnResources([
+        seller.account.address,
+        2,
+        10n,
+      ]);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      expect(receipt.status).to.equal("success");
+    });
+
+    it("should revert when burning more than balance", async function () {
+      const { trading, seller, publicClient } =
+        await loadFixture(deployFixture);
+
+      const hash = await trading.write.mintResources([
+        seller.account.address,
+        3,
+        10n,
+      ]);
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      await expect(
+        trading.write.burnResources([seller.account.address, 3, 50n])
+      ).to.be.rejectedWith("Insufficient resources");
+    });
+
+    it("should revert when called by non-owner", async function () {
+      const { trading, seller } = await loadFixture(deployFixture);
+
+      const tradingAsSeller = await hre.viem.getContractAt(
+        "AgentTrading",
+        trading.address,
+        { client: { wallet: seller } }
+      );
+
+      await expect(
+        tradingAsSeller.write.burnResources([seller.account.address, 3, 10n])
+      ).to.be.rejectedWith("OwnableUnauthorizedAccount");
+    });
+  });
 });

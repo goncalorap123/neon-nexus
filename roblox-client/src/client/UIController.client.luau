@@ -12,6 +12,7 @@ local GetGameStateRF = Remotes:WaitForChild("GetGameState") :: RemoteFunction
 local TriggerEventRF = Remotes:WaitForChild("TriggerEvent") :: RemoteFunction
 local GetLeaderboardRF = Remotes:WaitForChild("GetLeaderboard") :: RemoteFunction
 local GetAgentHistoryRF = Remotes:WaitForChild("GetAgentHistory") :: RemoteFunction
+local GetRoundStatusRF = Remotes:WaitForChild("GetRoundStatus") :: RemoteFunction
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 
@@ -147,8 +148,29 @@ scoreLabel.TextSize = 20
 scoreLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
 scoreLabel.Font = Enum.Font.GothamBold
 
+-- Expand status frame to fit survival info
+statusFrame.Size = UDim2.new(0, 260, 0, 320)
+
+-- Survival section
+local aliveLabel = createLabel(statusFrame, "Alive", UDim2.new(0, 10, 0, 232), UDim2.new(1, -20, 0, 20), "Alive: ? / ?")
+aliveLabel.TextColor3 = Color3.fromRGB(80, 255, 120)
+aliveLabel.TextSize = 15
+aliveLabel.Font = Enum.Font.GothamBold
+
+local yieldPoolLabel = createLabel(statusFrame, "YieldPool", UDim2.new(0, 10, 0, 254), UDim2.new(1, -20, 0, 20), "Yield Pool: $0")
+yieldPoolLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+yieldPoolLabel.TextSize = 15
+yieldPoolLabel.Font = Enum.Font.GothamBold
+
+local burnRateLabel = createLabel(statusFrame, "BurnRate", UDim2.new(0, 10, 0, 276), UDim2.new(1, -20, 0, 20), "Costs: ?/cycle")
+burnRateLabel.TextColor3 = Color3.fromRGB(255, 160, 60)
+burnRateLabel.TextSize = 13
+
+local cyclesSurvivedLabel = createLabel(statusFrame, "Cycles", UDim2.new(0, 10, 0, 296), UDim2.new(1, -20, 0, 20), "Cycles: 0")
+cyclesSurvivedLabel.TextColor3 = Color3.fromRGB(180, 180, 220)
+
 -- Strategy Selector
-local strategyFrame = createFrame("StrategyFrame", UDim2.new(0, 10, 0, 260), UDim2.new(0, 260, 0, 100))
+local strategyFrame = createFrame("StrategyFrame", UDim2.new(0, 10, 0, 340), UDim2.new(0, 260, 0, 100))
 strategyFrame.Visible = false
 strategyFrame.Parent = hudContainer
 
@@ -163,7 +185,7 @@ balancedBtn.BackgroundColor3 = Color3.fromRGB(140, 140, 40)
 aggressiveBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
 
 -- Event Trigger Panel
-local eventFrame = createFrame("EventFrame", UDim2.new(0, 10, 0, 370), UDim2.new(0, 260, 0, 60))
+local eventFrame = createFrame("EventFrame", UDim2.new(0, 10, 0, 450), UDim2.new(0, 260, 0, 60))
 eventFrame.Visible = false
 eventFrame.Parent = hudContainer
 
@@ -196,7 +218,7 @@ for i = 1, 10 do
 end
 
 -- Agent Activity Feed (left side, below events)
-local activityFrame = createFrame("ActivityFrame", UDim2.new(0, 10, 0, 440), UDim2.new(0, 260, 0, 260))
+local activityFrame = createFrame("ActivityFrame", UDim2.new(0, 10, 0, 520), UDim2.new(0, 260, 0, 260))
 activityFrame.Visible = false
 activityFrame.Parent = hudContainer
 
@@ -382,6 +404,17 @@ local function updateStatusUI(data: any)
 	if data.score ~= nil then
 		scoreLabel.Text = "Score: " .. tostring(data.score)
 	end
+
+	-- Survival info
+	if data.aliveCount ~= nil and data.totalAgents ~= nil then
+		aliveLabel.Text = "Alive: " .. tostring(data.aliveCount) .. " / " .. tostring(data.totalAgents)
+	end
+
+	if data.survival then
+		local s = data.survival
+		burnRateLabel.Text = string.format("Costs: %d food + %d energy/cycle", s.foodBurnRate or 0, s.energyBurnRate or 0)
+		cyclesSurvivedLabel.Text = "Cycles Survived: " .. tostring(s.cyclesSurvived or 0)
+	end
 end
 
 local function updateLeaderboardUI(entries: any)
@@ -390,9 +423,16 @@ local function updateLeaderboardUI(entries: any)
 		if entries[i] then
 			local e = entries[i]
 			local name = e.playerId or "???"
-			local deposit = (e.onChain and e.onChain.deposit) or "0"
-			lbl.Text = string.format("#%d  %s  -  %s", i, name, tostring(deposit))
-			lbl.TextColor3 = Color3.fromRGB(220, 220, 255)
+			-- Truncate long house agent names
+			if #name > 16 then
+				name = string.sub(name, 1, 14) .. ".."
+			end
+			local score = e.score or 0
+			local alive = e.alive
+			local statusIcon = alive and "[ALIVE]" or "[DEAD]"
+			local houseTag = e.isHouseAgent and " (H)" or ""
+			lbl.Text = string.format("#%d %s %s%s  $%d", i, statusIcon, name, houseTag, score)
+			lbl.TextColor3 = alive and Color3.fromRGB(80, 255, 120) or Color3.fromRGB(255, 80, 80)
 		else
 			lbl.Text = ""
 		end
@@ -413,6 +453,14 @@ local function refreshGameState()
 	local historyResult = GetAgentHistoryRF:InvokeServer()
 	if historyResult and type(historyResult) == "table" then
 		updateActivityFeed(historyResult)
+	end
+
+	-- Fetch round status for yield pool
+	local roundResult = GetRoundStatusRF:InvokeServer()
+	if roundResult and type(roundResult) == "table" then
+		if roundResult.yieldPool ~= nil then
+			yieldPoolLabel.Text = "Yield Pool: $" .. tostring(roundResult.yieldPool)
+		end
 	end
 end
 

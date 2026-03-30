@@ -5,6 +5,11 @@ import { BlockchainService } from '../blockchain/blockchain.service';
 import { TransactionLogService } from '../database/transaction-log.service';
 
 const RESOURCE_NAMES = ['wood', 'steel', 'energy', 'food'];
+const BURN_RATES: Record<number, { food: number; energy: number }> = {
+  0: { food: 2, energy: 1 },
+  1: { food: 3, energy: 2 },
+  2: { food: 5, energy: 4 },
+};
 
 @Injectable()
 export class GameService {
@@ -48,11 +53,28 @@ export class GameService {
     const food = Number(resources['food'] ?? 0);
     const score = deposit + yieldEarned + (wood * 10 + steel * 15 + energy * 20 + food * 10);
 
+    // Survival info
+    const dbAgent = await this.agentService.getAgentEntity(playerId);
+    const strategyType = Number(agent.onChain?.strategyType ?? 1);
+    const burnRate = BURN_RATES[strategyType] ?? BURN_RATES[1];
+    const aliveCount = await this.agentService.getAliveCount();
+
     return {
       player: agent,
       resources,
       flowBalance,
       score,
+      survival: {
+        foodBurnRate: burnRate.food,
+        energyBurnRate: burnRate.energy,
+        cyclesOfFoodLeft: burnRate.food > 0 ? Math.floor(food / burnRate.food) : 999,
+        cyclesOfEnergyLeft: burnRate.energy > 0 ? Math.floor(energy / burnRate.energy) : 999,
+        cyclesSurvived: dbAgent?.cyclesSurvived ?? 0,
+        eliminated: dbAgent?.eliminated ?? false,
+        isHouseAgent: dbAgent?.isHouseAgent ?? false,
+      },
+      aliveCount,
+      totalAgents: await this.agentService.getAllAgentsIncludingEliminated().then((a) => a.length),
     };
   }
 
@@ -142,33 +164,74 @@ export class GameService {
   }
 
   async getLeaderboard(): Promise<any[]> {
-    const playerIds = await this.agentService.getAllPlayerIds();
-    const agents = await Promise.all(
-      playerIds.map((id) => this.agentService.getAgent(id)),
-    );
+    const allAgents = await this.agentService.getAllAgentsIncludingEliminated();
 
-    // Fetch resources and compute scores for all agents
     const agentsWithScores = await Promise.all(
-      agents.filter((a) => a !== null).map(async (a) => {
+      allAgents.map(async (dbAgent) => {
         let score = 0;
+        let onChain: any = null;
         try {
-          const deposit = Number(a.onChain?.deposit ?? 0);
-          const yieldEarned = Number(a.onChain?.yieldEarned ?? 0);
+          onChain = await this.blockchainService.getAgent(dbAgent.address);
+          const deposit = Number(onChain?.deposit ?? 0);
+          const yieldEarned = Number(onChain?.yieldEarned ?? 0);
 
           let wood = 0, steel = 0, energy = 0, food = 0;
           try {
-            wood = Number(await this.blockchainService.getAgentResources(a.address, 0));
-            steel = Number(await this.blockchainService.getAgentResources(a.address, 1));
-            energy = Number(await this.blockchainService.getAgentResources(a.address, 2));
-            food = Number(await this.blockchainService.getAgentResources(a.address, 3));
+            wood = Number(await this.blockchainService.getAgentResources(dbAgent.address, 0));
+            steel = Number(await this.blockchainService.getAgentResources(dbAgent.address, 1));
+            energy = Number(await this.blockchainService.getAgentResources(dbAgent.address, 2));
+            food = Number(await this.blockchainService.getAgentResources(dbAgent.address, 3));
           } catch {}
 
-          score = deposit + yieldEarned + (wood * 10 + steel * 15 + energy * 20 + food * 10);
+          score = deposit + yieldEarned + (wood * 10 + steel * 15 + energy * 20 + food * 10) + (dbAgent.cyclesSurvived * 100);
         } catch {}
-        return { ...a, score };
+        return {
+          playerId: dbAgent.playerId,
+          address: dbAgent.address,
+          score,
+          alive: dbAgent.active && !dbAgent.eliminated,
+          eliminated: dbAgent.eliminated,
+          isHouseAgent: dbAgent.isHouseAgent,
+          cyclesSurvived: dbAgent.cyclesSurvived,
+        };
       }),
     );
 
-    return agentsWithScores.sort((a, b) => b.score - a.score);
+    // Sort alive-first, then by score descending
+    return agentsWithScores.sort((a, b) => {
+      if (a.alive !== b.alive) return a.alive ? -1 : 1;
+      return b.score - a.score;
+    });
+  }
+
+  async getRoundStatus(): Promise<any> {
+    const allAgents = await this.agentService.getAllAgentsIncludingEliminated();
+    const aliveCount = allAgents.filter((a) => a.active && !a.eliminated).length;
+
+    // Calculate total yield pool
+    let yieldPool = 0;
+    for (const agent of allAgents) {
+      try {
+        const onChain = await this.blockchainService.getAgent(agent.address);
+        yieldPool += Number(onChain?.yieldEarned ?? 0);
+      } catch {}
+    }
+
+    const eliminatedAgents = allAgents
+      .filter((a) => a.eliminated)
+      .map((a) => ({
+        playerId: a.playerId,
+        address: a.address,
+        isHouseAgent: a.isHouseAgent,
+        eliminatedAt: a.eliminatedAt,
+        cyclesSurvived: a.cyclesSurvived,
+      }));
+
+    return {
+      aliveCount,
+      totalAgents: allAgents.length,
+      yieldPool,
+      eliminatedAgents,
+    };
   }
 }

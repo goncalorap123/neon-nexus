@@ -17,6 +17,18 @@ export class AgentEntity {
   @Column({ default: true })
   active: boolean;
 
+  @Column({ default: false })
+  isHouseAgent: boolean;
+
+  @Column({ default: 0 })
+  cyclesSurvived: number;
+
+  @Column({ default: false })
+  eliminated: boolean;
+
+  @Column({ type: 'datetime', nullable: true, default: null })
+  eliminatedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

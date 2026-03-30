@@ -43,4 +43,10 @@ export class GameController {
     const actions = await this.agentActionService.getAllActions();
     return { success: true, data: actions };
   }
+
+  @Get('round-status')
+  async getRoundStatus() {
+    const status = await this.gameService.getRoundStatus();
+    return { success: true, data: status };
+  }
 }
