@@ -90,12 +90,18 @@ export class GameService {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    return this.randomService.commitEvent(
-      walletInfo.walletId,
-      walletInfo.address,
-      eventType,
+    // Commit on-chain via Cadence Arch VRF
+    const commitData = this.blockchainService.encodeCommitEvent(walletInfo.address, eventType);
+    const tx = await this.blockchainService.ownerSendTransaction(
+      this.blockchainService.getRandomEventsAddress(),
+      commitData,
     );
+    return { txHash: tx.hash };
   }
+
+  // Track cooldowns: playerId -> last event timestamp
+  private eventCooldowns: Map<string, number> = new Map();
+  private readonly EVENT_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes = 2 cycles
 
   async revealRandomEvent(playerId: string, eventType: number): Promise<{ txHash: string; outcome: any }> {
     const walletInfo = await this.agentService.getWalletInfo(playerId);
@@ -103,70 +109,98 @@ export class GameService {
       throw new Error(`No wallet found for player ${playerId}`);
     }
 
-    const revealResult = await this.randomService.revealEvent(
-      walletInfo.walletId,
-      walletInfo.address,
+    const agentTrading = this.blockchainService.getAgentTradingAddress();
+
+    // Reveal on-chain — Cadence Arch VRF generates the random outcome
+    const revealData = this.blockchainService.encodeRevealEvent(walletInfo.address);
+    const revealResult = await this.blockchainService.ownerSendTransaction(
+      this.blockchainService.getRandomEventsAddress(),
+      revealData,
     );
 
-    // Simulate outcome in backend (MVP: use Math.random matching contract ranges)
-    const roll = Math.floor(Math.random() * 100);
-    let outcome: any = { roll, eventType, effects: [] };
+    // Parse the VRF outcome from the EventRevealed log
+    const roll = await this.blockchainService.parseRevealOutcome(revealResult.hash);
+    let outcome: any = { roll, eventType, vrfTxHash: revealResult.hash, effects: [] };
 
     try {
       if (eventType === 0) {
-        // Gacha
+        // === GACHA ROLL ===
+        // Cost: 10 food (burned on-chain)
+        const foodBalance = await this.blockchainService.getAgentResources(walletInfo.address, 3);
+        if (foodBalance < 10n) {
+          return { txHash: '', outcome: { error: 'Not enough food (need 10)', effects: [{ type: 'insufficient_food' }] } };
+        }
+
+        // Burn the cost
+        const burnData = this.blockchainService.encodeBurnResources(walletInfo.address, 3, 10n);
+        await this.blockchainService.ownerSendTransaction(agentTrading, burnData);
+        outcome.cost = { resource: 'food', amount: 10 };
+
         if (roll < 20) {
-          // Legendary: mint 500 of random resource
-          const resType = Math.floor(Math.random() * 4);
-          const mintData = this.blockchainService.encodeMintResources(walletInfo.address, resType, 500n);
-          await this.blockchainService.ownerSendTransaction(this.blockchainService.getAgentTradingAddress(), mintData);
-          outcome.effects.push({ type: 'legendary', resource: RESOURCE_NAMES[resType], amount: 500 });
+          // Legendary (20%): +30 food AND +30 energy
+          await this.blockchainService.ownerSendTransaction(agentTrading,
+            this.blockchainService.encodeMintResources(walletInfo.address, 3, 30n));
+          await this.blockchainService.ownerSendTransaction(agentTrading,
+            this.blockchainService.encodeMintResources(walletInfo.address, 2, 30n));
+          outcome.effects.push({ type: 'legendary', description: '+30 Food, +30 Energy', rarity: 'legendary' });
         } else if (roll < 50) {
-          // Rare: mint 200 of random resource
-          const resType = Math.floor(Math.random() * 4);
-          const mintData = this.blockchainService.encodeMintResources(walletInfo.address, resType, 200n);
-          await this.blockchainService.ownerSendTransaction(this.blockchainService.getAgentTradingAddress(), mintData);
-          outcome.effects.push({ type: 'rare', resource: RESOURCE_NAMES[resType], amount: 200 });
+          // Rare (30%): +15 food or energy (whichever is lower)
+          const energy = await this.blockchainService.getAgentResources(walletInfo.address, 2);
+          const resType = (foodBalance <= energy) ? 3 : 2;
+          await this.blockchainService.ownerSendTransaction(agentTrading,
+            this.blockchainService.encodeMintResources(walletInfo.address, resType, 15n));
+          outcome.effects.push({ type: 'rare', description: `+15 ${RESOURCE_NAMES[resType]}`, rarity: 'rare' });
         } else if (roll < 80) {
-          // Common: mint 50 of random resource
-          const resType = Math.floor(Math.random() * 4);
-          const mintData = this.blockchainService.encodeMintResources(walletInfo.address, resType, 50n);
-          await this.blockchainService.ownerSendTransaction(this.blockchainService.getAgentTradingAddress(), mintData);
-          outcome.effects.push({ type: 'common', resource: RESOURCE_NAMES[resType], amount: 50 });
+          // Common (30%): +8 food or energy
+          const energy = await this.blockchainService.getAgentResources(walletInfo.address, 2);
+          const resType = (foodBalance <= energy) ? 3 : 2;
+          await this.blockchainService.ownerSendTransaction(agentTrading,
+            this.blockchainService.encodeMintResources(walletInfo.address, resType, 8n));
+          outcome.effects.push({ type: 'common', description: `+8 ${RESOURCE_NAMES[resType]}`, rarity: 'common' });
         } else {
-          outcome.effects.push({ type: 'nothing' });
+          // Nothing (20%): wasted 10 food
+          outcome.effects.push({ type: 'nothing', description: 'Nothing! 10 food wasted.', rarity: 'common' });
         }
-      } else if (eventType === 1) {
-        // Disaster: no resource loss for now, just log
-        outcome.effects.push({ type: 'disaster', message: 'Disaster struck but no losses (MVP)' });
-      } else if (eventType === 2) {
-        // Trade bonus: mint bonus resources = outcome * 10
-        const bonusAmount = BigInt(roll * 10);
-        if (bonusAmount > 0n) {
+
+      } else {
+        // === RANDOM EVENT (market volatility) ===
+        // Cooldown: once per 2 cycles (10 minutes)
+        const now = Date.now();
+        const lastUsed = this.eventCooldowns.get(playerId) ?? 0;
+        if (now - lastUsed < this.EVENT_COOLDOWN_MS) {
+          const secsLeft = Math.ceil((this.EVENT_COOLDOWN_MS - (now - lastUsed)) / 1000);
+          const minsLeft = Math.ceil(secsLeft / 60);
+          return { txHash: '', outcome: { error: `On cooldown (${minsLeft}m left)`, effects: [{ type: 'cooldown' }] } };
+        }
+        this.eventCooldowns.set(playerId, now);
+
+        if (roll < 33) {
+          // Bull market (33%): +20 random resource
           const resType = Math.floor(Math.random() * 4);
-          const mintData = this.blockchainService.encodeMintResources(walletInfo.address, resType, bonusAmount);
-          await this.blockchainService.ownerSendTransaction(this.blockchainService.getAgentTradingAddress(), mintData);
-          outcome.effects.push({ type: 'trade_bonus', resource: RESOURCE_NAMES[resType], amount: Number(bonusAmount) });
-        }
-      } else if (eventType === 3) {
-        // Loot: mint outcome / 10 of each resource
-        const lootAmount = BigInt(Math.floor(roll / 10));
-        if (lootAmount > 0n) {
-          for (let i = 0; i < 4; i++) {
-            const mintData = this.blockchainService.encodeMintResources(walletInfo.address, i, lootAmount);
-            await this.blockchainService.ownerSendTransaction(this.blockchainService.getAgentTradingAddress(), mintData);
+          await this.blockchainService.ownerSendTransaction(agentTrading,
+            this.blockchainService.encodeMintResources(walletInfo.address, resType, 20n));
+          outcome.effects.push({ type: 'bull_market', description: `Bull market! +20 ${RESOURCE_NAMES[resType]}`, rarity: 'rare' });
+        } else if (roll < 66) {
+          // Flat market (33%): nothing happens
+          outcome.effects.push({ type: 'flat_market', description: 'Flat market. Nothing happened.', rarity: 'common' });
+        } else {
+          // Bear market (33%): -20 from random resource (food or energy)
+          const resType = Math.random() < 0.5 ? 3 : 2; // food or energy only
+          const balance = await this.blockchainService.getAgentResources(walletInfo.address, resType);
+          const burnAmount = balance < 20n ? balance : 20n;
+          if (burnAmount > 0n) {
+            await this.blockchainService.ownerSendTransaction(agentTrading,
+              this.blockchainService.encodeBurnResources(walletInfo.address, resType, burnAmount));
           }
-          outcome.effects.push({ type: 'loot', amountEach: Number(lootAmount), resources: RESOURCE_NAMES });
+          outcome.effects.push({ type: 'bear_market', description: `Bear market! -${burnAmount} ${RESOURCE_NAMES[resType]}`, rarity: 'legendary' });
         }
       }
     } catch (error) {
       outcome.error = error.message;
     }
 
-    // Log the event outcome
-    await this.txLogService.log(playerId, walletInfo.address, 'event_revealed', revealResult.txHash, outcome);
-
-    return { txHash: revealResult.txHash, outcome };
+    await this.txLogService.log(playerId, walletInfo.address, 'event_revealed', '', outcome);
+    return { txHash: '', outcome };
   }
 
   async getLeaderboard(): Promise<any[]> {

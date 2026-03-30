@@ -67,22 +67,22 @@ GetGameStateRF.OnServerInvoke = function(plr)
 	return nil
 end
 
--- TriggerEvent: commit + wait + reveal
+-- TriggerEvent: commit on-chain (Cadence Arch VRF) → wait → reveal
 TriggerEventRF.OnServerInvoke = function(plr, eventType: number)
 	local playerId = getPlayerId(plr)
 
-	-- Commit phase
+	-- Commit phase (on-chain VRF)
 	local commitOk, commitData = HttpBridge.triggerRandomEvent(playerId, eventType)
 	if not commitOk then
-		warn("[GameManager] Commit failed for", plr.Name)
+		warn("[GameManager] VRF commit failed for", plr.Name)
 		return nil
 	end
 
 	-- Wait for next block on Flow (~3-4 seconds)
 	task.wait(4)
 
-	-- Reveal phase
-	local revealOk, revealData = HttpBridge.revealRandomEvent(playerId)
+	-- Reveal phase (reads VRF outcome on-chain)
+	local revealOk, revealData = HttpBridge.revealRandomEvent(playerId, eventType)
 	if revealOk then
 		return revealData
 	end

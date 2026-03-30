@@ -284,8 +284,8 @@ conservativeBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 60)
 balancedBtn.BackgroundColor3 = Color3.fromRGB(140, 140, 40)
 aggressiveBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
 
-local gachaBtn = createButton(controlsFrame, "Gacha", UDim2.new(0, 8, 0, 56), UDim2.new(0, 110, 0, 26), "Gacha Roll")
-local eventBtn = createButton(controlsFrame, "Event", UDim2.new(0, 122, 0, 56), UDim2.new(0, 110, 0, 26), "Random Event")
+local gachaBtn = createButton(controlsFrame, "Gacha", UDim2.new(0, 8, 0, 56), UDim2.new(0, 110, 0, 26), "Gacha (-10F)")
+local eventBtn = createButton(controlsFrame, "Event", UDim2.new(0, 122, 0, 56), UDim2.new(0, 110, 0, 26), "Market Event")
 gachaBtn.TextSize = 12
 eventBtn.TextSize = 12
 gachaBtn.BackgroundColor3 = Color3.fromRGB(140, 50, 160)
@@ -933,39 +933,140 @@ aggressiveBtn.MouseButton1Click:Connect(function() setStrategy(Config.STRATEGY_A
 -- Event Buttons
 -- ============================================================
 
-local function parseEventRarity(result: any): (string, string)
+-- Parse outcome from backend event response
+local function parseOutcome(result: any): (string, string)
 	if type(result) ~= "table" then
 		return tostring(result), "common"
 	end
-	local rarity = result.rarity or "common"
-	local desc = result.description or result.result or ""
-	local bonus = result.bonus or result.amount or ""
-	if bonus ~= "" then
-		desc = desc .. " +" .. tostring(bonus)
+
+	-- Check for error
+	if result.error then
+		return tostring(result.error), "common"
 	end
-	return desc, string.lower(tostring(rarity))
+
+	-- Parse outcome.effects
+	local outcome = result.outcome or result
+	if outcome.error then
+		return tostring(outcome.error), "common"
+	end
+
+	local effects = outcome.effects
+	if type(effects) == "table" and #effects > 0 then
+		local eff = effects[1]
+		local desc = eff.description or eff.type or "Unknown"
+		local rarity = eff.rarity or "common"
+		return desc, string.lower(tostring(rarity))
+	end
+
+	return "Something happened", "common"
+end
+
+-- Trigger a screen-wide visual flash for gacha/events
+local flashFrame = Instance.new("Frame")
+flashFrame.Name = "FlashOverlay"
+flashFrame.Size = UDim2.new(1, 0, 1, 0)
+flashFrame.Position = UDim2.new(0, 0, 0, 0)
+flashFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+flashFrame.BackgroundTransparency = 1
+flashFrame.BorderSizePixel = 0
+flashFrame.ZIndex = 20
+flashFrame.Parent = screenGui
+
+local function screenFlash(color: Color3, duration: number)
+	flashFrame.BackgroundColor3 = color
+	flashFrame.BackgroundTransparency = 0.5
+	task.spawn(function()
+		for i = 1, 20 do
+			flashFrame.BackgroundTransparency = 0.5 + (i / 20) * 0.5
+			task.wait(duration / 20)
+		end
+		flashFrame.BackgroundTransparency = 1
+	end)
+end
+
+-- Gacha visual: spinning slot machine text effect before reveal
+local function playGachaAnimation(callback: () -> ())
+	local rarities = { "COMMON", "RARE", "LEGENDARY", "NOTHING", "RARE", "LEGENDARY", "COMMON" }
+	local colors = {
+		COMMON = Color3.fromRGB(200, 200, 200),
+		RARE = Color3.fromRGB(180, 80, 255),
+		LEGENDARY = Color3.fromRGB(255, 215, 0),
+		NOTHING = Color3.fromRGB(100, 100, 100),
+	}
+
+	popupFrame.Visible = true
+	popupFrame.Position = UDim2.new(0.5, -200, 0.35, -40)
+
+	-- Spin through rarities
+	task.spawn(function()
+		for i = 1, 14 do
+			local r = rarities[(i % #rarities) + 1]
+			popupLabel.Text = "[ " .. r .. " ]"
+			popupLabel.TextColor3 = colors[r] or Color3.fromRGB(200, 200, 200)
+			popupStroke.Color = colors[r] or Color3.fromRGB(200, 200, 200)
+			task.wait(0.08 + (i * 0.02)) -- slows down
+		end
+		callback()
+	end)
 end
 
 gachaBtn.MouseButton1Click:Connect(function()
 	gachaBtn.Text = "Rolling..."
-	local result = TriggerEventRF:InvokeServer(Config.EVENT_GACHA)
-	gachaBtn.Text = "Gacha Roll"
-	if result then
-		local desc, rarity = parseEventRarity(result)
-		showEventPopup("GACHA: " .. string.upper(rarity) .. "! " .. desc, rarity)
-		refreshGameState()
-	end
+	gachaBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 90)
+
+	playGachaAnimation(function()
+		local result = TriggerEventRF:InvokeServer(Config.EVENT_GACHA)
+		gachaBtn.Text = "Gacha (-10F)"
+		gachaBtn.BackgroundColor3 = Color3.fromRGB(140, 50, 160)
+
+		if result then
+			local desc, rarity = parseOutcome(result)
+
+			if rarity == "legendary" then
+				screenFlash(Color3.fromRGB(255, 215, 0), 1.0)
+				showEventPopup("LEGENDARY! " .. desc, "legendary")
+				addFeedEntry("GACHA LEGENDARY! " .. desc, Color3.fromRGB(255, 215, 0))
+			elseif rarity == "rare" then
+				screenFlash(Color3.fromRGB(180, 80, 255), 0.6)
+				showEventPopup("RARE! " .. desc, "rare")
+				addFeedEntry("Gacha Rare: " .. desc, Color3.fromRGB(180, 80, 255))
+			else
+				showEventPopup(desc, "common")
+				addFeedEntry("Gacha: " .. desc, Color3.fromRGB(160, 160, 160))
+			end
+			refreshGameState()
+		else
+			popupFrame.Visible = false
+		end
+	end)
 end)
 
 eventBtn.MouseButton1Click:Connect(function()
 	eventBtn.Text = "Rolling..."
-	local eventTypes = { Config.EVENT_DISASTER, Config.EVENT_TRADE_BONUS, Config.EVENT_LOOT }
-	local eventType = eventTypes[math.random(1, #eventTypes)]
-	local result = TriggerEventRF:InvokeServer(eventType)
-	eventBtn.Text = "Random Event"
+	eventBtn.BackgroundColor3 = Color3.fromRGB(100, 60, 20)
+
+	-- Market event visual: brief screen tint
+	screenFlash(Color3.fromRGB(0, 150, 255), 0.5)
+
+	local result = TriggerEventRF:InvokeServer(1) -- eventType 1 = random event
+	eventBtn.Text = "Market Event"
+	eventBtn.BackgroundColor3 = Color3.fromRGB(160, 90, 30)
+
 	if result then
-		local desc, rarity = parseEventRarity(result)
-		showEventPopup("EVENT: " .. desc, rarity)
+		local desc, rarity = parseOutcome(result)
+
+		if string.find(desc, "Bull") then
+			screenFlash(Color3.fromRGB(50, 255, 100), 0.8)
+			showEventPopup(desc, "rare")
+			addFeedEntry(desc, Color3.fromRGB(80, 255, 120))
+		elseif string.find(desc, "Bear") then
+			screenFlash(Color3.fromRGB(255, 50, 50), 0.8)
+			showEventPopup(desc, "legendary")
+			addFeedEntry(desc, Color3.fromRGB(255, 80, 80))
+		else
+			showEventPopup(desc, "common")
+			addFeedEntry(desc, Color3.fromRGB(160, 160, 160))
+		end
 		refreshGameState()
 	end
 end)

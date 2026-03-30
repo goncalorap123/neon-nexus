@@ -88,9 +88,10 @@ function HttpBridge.triggerRandomEvent(playerId: string, eventType: number)
 end
 
 -- Reveal a random event (reveal phase)
-function HttpBridge.revealRandomEvent(playerId: string)
+function HttpBridge.revealRandomEvent(playerId: string, eventType: number?)
 	return HttpBridge.request("POST", "/game/reveal-event", {
 		playerId = playerId,
+		eventType = eventType or 0,
 	})
 end
 

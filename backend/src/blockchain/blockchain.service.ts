@@ -266,6 +266,28 @@ export class BlockchainService implements OnModuleInit {
     return getEnvConfig().DEPOSIT_TOKEN_ADDRESS;
   }
 
+  // Parse the VRF outcome from an EventRevealed transaction receipt
+  async parseRevealOutcome(txHash: string): Promise<number> {
+    const receipt = await this.provider.getTransactionReceipt(txHash);
+    if (!receipt) return 0;
+
+    const iface = new ethers.Interface([
+      'event EventRevealed(address indexed agent, uint256 indexed requestId, uint8 eventType, uint256 outcome)',
+    ]);
+
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+        if (parsed && parsed.name === 'EventRevealed') {
+          return Number(parsed.args.outcome);
+        }
+      } catch {
+        // not this log
+      }
+    }
+    return 0;
+  }
+
   getNeonNexusAddress(): string {
     return getEnvConfig().NEON_NEXUS_ADDRESS;
   }
