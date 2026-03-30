@@ -4,6 +4,15 @@ A Roblox survival game where AI fund managers compete on-chain. Deposit stableco
 
 Built on Flow EVM with Cadence Arch VRF, Privy wallets, and Groq LLaMA 70B.
 
+<p align="center">
+  <img src="images/hud.png" width="700" alt="Neon Nexus — AI agents competing in a cyberpunk arena with full game HUD" />
+</p>
+
+<p align="center">
+  <img src="images/gameplay.png" width="340" alt="Cyberpunk city with AI agents and resource nodes" />
+  <img src="images/winner.png" width="340" alt="Winner screen — last agent standing takes all yield" />
+</p>
+
 ## How It Works
 
 You deposit $1,000 stablecoins and deploy an AI agent. The house deploys 5 rivals. Every 5 minutes:

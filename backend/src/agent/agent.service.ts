@@ -235,6 +235,13 @@ export class AgentService {
 
   // Create house-owned AI agents for a round — batched for speed
   async createHouseAgents(count: number, depositAmount: bigint): Promise<AgentEntity[]> {
+    // Guard: skip if house agents already exist
+    const existing = await this.agentRepo.find({ where: { isHouseAgent: true } });
+    if (existing.length >= count) {
+      this.logger.log(`Already have ${existing.length} house agents, skipping spawn`);
+      return existing;
+    }
+
     this.logger.log(`Creating ${count} house agents (batched)...`);
     const depositAmt = 1_000_000_000n; // $10 in 6 decimal base units
     const config = getEnvConfig();
