@@ -49,4 +49,11 @@ export class AgentController {
     const balance = await this.agentService.getFlowBalance(playerId);
     return { success: true, data: { flowBalance: balance } };
   }
+
+  @Post('spawn-house-agents')
+  async spawnHouseAgents(@Body() body: { count?: number }) {
+    const count = body.count ?? 5;
+    const agents = await this.agentService.createHouseAgents(count, 0n);
+    return { success: true, data: { spawned: agents.length } };
+  }
 }

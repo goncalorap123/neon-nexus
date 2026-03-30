@@ -65,6 +65,16 @@ export class AgentService {
     // Seed starting resources
     await this.seedResources(wallet.address);
 
+    // Spawn house agents if this is the first player agent
+    const houseAgents = await this.agentRepo.find({ where: { isHouseAgent: true } });
+    if (houseAgents.length === 0) {
+      this.logger.log('First player agent created — spawning house agents...');
+      // Spawn in background so the player doesn't wait
+      this.createHouseAgents(5, 0n).catch((err) => {
+        this.logger.error(`Failed to create house agents: ${err.message}`);
+      });
+    }
+
     return { walletId: wallet.id, address: wallet.address, txHash: tx.hash };
   }
 
